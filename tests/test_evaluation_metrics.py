@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
+import tempfile
 import unittest
 
 import numpy as np
 
 from datasets.epic_kitchens.annotations import EpicFrame, VisorObject
+from evaluation.pipeline_outputs import clip_source_indices, parse_clip_name
 from evaluation.metrics import (
     EvaluationConfig,
     evaluate_clip,
@@ -169,6 +173,39 @@ class EvaluationMetricTests(unittest.TestCase):
         flicker = flow_compensated_flicker([rgb, rgb], [simplified, simplified])
 
         self.assertAlmostEqual(flicker, 0.0)
+
+    def test_pipeline_evaluator_uses_test_set_manifest_indices(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            data_root = Path(tmp)
+            manifest_path = data_root / "video_snippets" / "test_set" / "manifest.json"
+            manifest_path.parent.mkdir(parents=True)
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "videos": {
+                            "P03_120": {
+                                "input_video": "data/epic_kitchens/video_snippets/test_set/inputs/P03_120_test_frames.mp4",
+                                "frame_indices": [10, 20, 40, 80],
+                            }
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            video_id, start, end = parse_clip_name("P03_120_test_frames")
+            expected, indices = clip_source_indices(
+                "P03_120_test_frames",
+                data_root,
+                start,
+                end,
+                output_count=3,
+                target_fps=10.0,
+            )
+
+            self.assertEqual(video_id, "P03_120")
+            self.assertEqual(expected, 4)
+            self.assertEqual(indices, [10, 20, 80])
 
 
 if __name__ == "__main__":

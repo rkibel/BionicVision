@@ -100,7 +100,9 @@ def evaluate_pipeline_clip(
     if len(combination_paths) != len(rgb_paths):
         raise ValueError(f"Expected equal RGB and combination counts in {clip_dir}")
 
-    expected_output_frames, sampled_indices = sampled_source_indices(
+    expected_output_frames, sampled_indices = clip_source_indices(
+        clip_dir.name,
+        data_root,
         start_frame,
         end_frame,
         len(combination_paths),
@@ -247,11 +249,49 @@ def quality_frame_rows(
     ]
 
 
-def parse_clip_name(name: str) -> tuple[str, int, int]:
+def parse_clip_name(name: str) -> tuple[str, int | None, int | None]:
     match = re.match(r"(?P<video>P\d+_\d+)_frames_(?P<start>\d+)_(?P<end>\d+)$", name)
-    if not match:
-        raise ValueError(f"Could not parse clip name: {name}")
-    return match.group("video"), int(match.group("start")), int(match.group("end"))
+    if match:
+        return match.group("video"), int(match.group("start")), int(match.group("end"))
+    match = re.match(r"(?P<video>P\d+_\d+)_test_frames$", name)
+    if match:
+        return match.group("video"), None, None
+    raise ValueError(f"Could not parse clip name: {name}")
+
+
+def clip_source_indices(
+    clip_name: str,
+    data_root: Path,
+    start_frame: int | None,
+    end_frame: int | None,
+    output_count: int,
+    target_fps: float,
+    *,
+    strict: bool = False,
+) -> tuple[int, list[int]]:
+    if start_frame is not None and end_frame is not None:
+        return sampled_source_indices(start_frame, end_frame, output_count, target_fps, strict=strict)
+    frame_indices = manifest_source_indices(data_root, clip_name)
+    expected_count = len(frame_indices)
+    if strict and expected_count != output_count:
+        raise ValueError(f"Expected {expected_count} output frames from {clip_name}, got {output_count}")
+    positions = np.linspace(0, max(expected_count - 1, 0), output_count, dtype=int)
+    return expected_count, [frame_indices[int(position)] for position in positions]
+
+
+def manifest_source_indices(data_root: Path, clip_name: str) -> list[int]:
+    manifest_path = data_root / "video_snippets" / "test_set" / "manifest.json"
+    if not manifest_path.exists():
+        raise FileNotFoundError(f"Test-set manifest not found: {manifest_path}")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    for details in manifest.get("videos", {}).values():
+        input_video = details.get("input_video")
+        if input_video and Path(input_video).stem == clip_name:
+            frame_indices = details.get("frame_indices")
+            if not frame_indices:
+                raise ValueError(f"Manifest entry for {clip_name} has no frame_indices; regenerate test videos")
+            return [int(index) for index in frame_indices]
+    raise ValueError(f"No manifest entry found for test clip: {clip_name}")
 
 
 def sampled_source_indices(

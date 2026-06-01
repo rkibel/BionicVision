@@ -30,8 +30,8 @@ from models.segmentation.mit_scene_parsing.adapter import build_scene_module, pr
 from simplification.fusion import baseline_fusion
 
 ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_CLIP_DIR = ROOT / "data" / "epic_kitchens" / "clips_10s"
-DEFAULT_OUTPUT_ROOT = ROOT / "outputs" / "han_baseline_epic10"
+DEFAULT_CLIP_DIR = ROOT / "data" / "epic_kitchens" / "video_snippets" / "test_set" / "inputs"
+DEFAULT_OUTPUT_ROOT = ROOT / "outputs" / "han_baseline_test_set"
 
 ADE20K_STRUCTURE_CLASSES = (
     0,  # wall

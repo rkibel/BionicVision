@@ -20,25 +20,25 @@ source .venv-models/bin/activate
 
 # Mandatory baseline reproduction.
 PYTHONPATH=src python -m pipelines.han_baseline \
-  --clip-dir data/epic_kitchens/video_snippets/first_10s \
-  --output-root outputs/han_baseline_data_first10 \
-  --target-fps 20 \
+  --clip-dir data/epic_kitchens/video_snippets/test_set/inputs \
+  --output-root outputs/han_baseline_test_set \
+  --target-fps 10 \
   --device cuda
 
 PYTHONPATH=src python -m evaluation.pipeline_outputs \
   --data-root data/epic_kitchens \
-  --output-root outputs/han_baseline_data_first10 \
-  --results-dir outputs/evaluation/han_baseline_data_first10
+  --output-root outputs/han_baseline_test_set \
+  --results-dir outputs/evaluation/han_baseline_test_set
 
 # Combination1 after the baseline exists.
 PYTHONPATH=src python -m pipelines.combination1 \
-  --clip-dir data/epic_kitchens/video_snippets/first_10s \
-  --output-root outputs/combination1_epic10 \
-  --target-fps 20 \
+  --clip-dir data/epic_kitchens/video_snippets/test_set/inputs \
+  --output-root outputs/combination1_test_set \
+  --target-fps 10 \
   --device cuda
 
 PYTHONPATH=src python -m evaluation.pipeline_outputs \
   --data-root data/epic_kitchens \
-  --output-root outputs/combination1_epic10 \
-  --results-dir outputs/evaluation/combination1_epic10
+  --output-root outputs/combination1_test_set \
+  --results-dir outputs/evaluation/combination1_test_set
 ```

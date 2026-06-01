@@ -26,7 +26,7 @@ class SceneParsingConfig:
 
 
 ROOT = Path(__file__).resolve().parents[4]
-DEFAULT_WEIGHTS = ROOT / "data" / "model_weights" / "mit_scene_parsing" / "ade20k-resnet50dilated-ppm_deepsup"
+DEFAULT_WEIGHTS = ROOT / "external" / "model_weights" / "mit_scene_parsing" / "ade20k-resnet50dilated-ppm_deepsup"
 
 
 def build_scene_module(*, device: str, weights_dir: Path = DEFAULT_WEIGHTS):

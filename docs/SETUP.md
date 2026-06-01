@@ -102,10 +102,10 @@ unzip -q /tmp/mono_stereo_640x192.zip \
 MIT scene parsing weights:
 
 ```bash
-mkdir -p data/model_weights/mit_scene_parsing/ade20k-resnet50dilated-ppm_deepsup
-wget -O data/model_weights/mit_scene_parsing/ade20k-resnet50dilated-ppm_deepsup/encoder_epoch_20.pth \
+mkdir -p external/model_weights/mit_scene_parsing/ade20k-resnet50dilated-ppm_deepsup
+wget -O external/model_weights/mit_scene_parsing/ade20k-resnet50dilated-ppm_deepsup/encoder_epoch_20.pth \
   http://sceneparsing.csail.mit.edu/model/pytorch/ade20k-resnet50dilated-ppm_deepsup/encoder_epoch_20.pth
-wget -O data/model_weights/mit_scene_parsing/ade20k-resnet50dilated-ppm_deepsup/decoder_epoch_20.pth \
+wget -O external/model_weights/mit_scene_parsing/ade20k-resnet50dilated-ppm_deepsup/decoder_epoch_20.pth \
   http://sceneparsing.csail.mit.edu/model/pytorch/ade20k-resnet50dilated-ppm_deepsup/decoder_epoch_20.pth
 ```
 
@@ -148,14 +148,23 @@ wget -O external/model_sources/segmentation/Tracking-Anything-with-DEVA/saves/sa
 
 ## Required Data
 
-`data/` is gitignored. For the current benchmark subset, these files are
-required:
+`data/` is gitignored. For the current benchmark subset, keep VISOR dense
+annotations and sparse RGB frames for the held-out test videos, plus generated
+test-set snippets and ground-truth videos:
 
 ```text
-data/epic_kitchens/video_snippets/first_10s/P06_110_frames_0000186_0000685.mp4
-data/epic_kitchens/video_snippets/first_10s/P07_103_frames_0000178_0000677.mp4
-data/epic_kitchens/visor/dense_annotations/P06_110/P06_110_interpolations.json
-data/epic_kitchens/visor/dense_annotations/P07_103/P07_103_interpolations.json
+data/epic_kitchens/video_snippets/test_set/manifest.json
+data/epic_kitchens/video_snippets/test_set/inputs/P03_120_test_frames.mp4
+data/epic_kitchens/video_snippets/test_set/inputs/P06_108_test_frames.mp4
+data/epic_kitchens/video_snippets/test_set/inputs/P08_17_test_frames.mp4
+data/epic_kitchens/video_snippets/test_set/inputs/P22_107_test_frames.mp4
+data/epic_kitchens/video_snippets/test_set/ground_truth/*_test_hand_gt_masks.mp4
+data/epic_kitchens/video_snippets/test_set/ground_truth/*_test_hand_gt_overlay.mp4
+data/epic_kitchens/video_snippets/test_set/ground_truth/*_test_all_gt_masks.mp4
+data/epic_kitchens/video_snippets/test_set/ground_truth/*_test_all_gt_overlay.mp4
+data/epic_kitchens/video_snippets/test_set/labels/*_test_labels.json
+data/epic_kitchens/visor/dense_annotations/{P03_120,P06_108,P08_17,P22_107}/
+data/epic_kitchens/visor/sparse_rgb_frames/{P03_120,P06_108,P08_17,P22_107}/
 ```
 
 The fastest exact setup is to copy the known-good asset bundle from an existing
@@ -164,9 +173,10 @@ machine:
 ```bash
 # On the known-good machine, from the repo root:
 tar -czf bionicvision-epic-subset-assets.tgz \
-  data/epic_kitchens/video_snippets/first_10s \
+  data/epic_kitchens/video_snippets/test_set \
   data/epic_kitchens/visor/dense_annotations \
-  data/model_weights \
+  data/epic_kitchens/visor/sparse_rgb_frames \
+  external/model_weights \
   external/model_sources/depth/monodepth2/models/mono+stereo_640x192 \
   external/model_sources/depth/TCMonoDepth/weights/_ckpt_small.pt.tar \
   external/model_sources/segmentation/Tracking-Anything-with-DEVA/saves/DEVA-propagation.pth
@@ -175,41 +185,16 @@ tar -czf bionicvision-epic-subset-assets.tgz \
 tar -xzf bionicvision-epic-subset-assets.tgz
 ```
 
-To rebuild the VISOR dense annotations directly:
+To rebuild the VISOR data and generated test videos directly:
 
 ```bash
-mkdir -p \
-  data/epic_kitchens/visor/dense_annotation_zips \
-  data/epic_kitchens/visor/dense_annotations/P06_110 \
-  data/epic_kitchens/visor/dense_annotations/P07_103
+PYTHONPATH=src:experiments/hand_segmentor python \
+  experiments/hand_segmentor/download_visor_subset.py \
+  --splits test
 
-wget -O data/epic_kitchens/visor/dense_annotation_zips/P06_110_interpolations.zip \
-  https://data.bris.ac.uk/datasets/2v6cgv1x04ol22qp9rm9x2j6a7/Interpolations-DenseAnnotations/train/P06_110_interpolations.zip
-wget -O data/epic_kitchens/visor/dense_annotation_zips/P07_103_interpolations.zip \
-  https://data.bris.ac.uk/datasets/2v6cgv1x04ol22qp9rm9x2j6a7/Interpolations-DenseAnnotations/val/P07_103_interpolations.zip
-
-unzip -q data/epic_kitchens/visor/dense_annotation_zips/P06_110_interpolations.zip \
-  -d data/epic_kitchens/visor/dense_annotations/P06_110
-unzip -q data/epic_kitchens/visor/dense_annotation_zips/P07_103_interpolations.zip \
-  -d data/epic_kitchens/visor/dense_annotations/P07_103
-```
-
-The MP4 snippets must be created from the official EPIC-KITCHENS source videos.
-Obtain the source videos through the EPIC-KITCHENS data access process, then cut
-the exact source-frame windows at 50 FPS:
-
-```bash
-mkdir -p data/epic_kitchens/video_snippets/first_10s
-
-ffmpeg -y -i /path/to/P06_110/source_video.mp4 \
-  -vf "select='between(n,186,685)',setpts=N/50/TB" \
-  -r 50 -an -c:v libx264 -pix_fmt yuv420p \
-  data/epic_kitchens/video_snippets/first_10s/P06_110_frames_0000186_0000685.mp4
-
-ffmpeg -y -i /path/to/P07_103/source_video.mp4 \
-  -vf "select='between(n,178,677)',setpts=N/50/TB" \
-  -r 50 -an -c:v libx264 -pix_fmt yuv420p \
-  data/epic_kitchens/video_snippets/first_10s/P07_103_frames_0000178_0000677.mp4
+PYTHONPATH=src:experiments/hand_segmentor python \
+  experiments/hand_segmentor/make_test_videos.py \
+  --split test
 ```
 
 ## Sanity Checks
@@ -226,9 +211,9 @@ Mandatory baseline smoke:
 
 ```bash
 PYTHONPATH=src python -m pipelines.han_baseline \
-  --clip-dir data/epic_kitchens/video_snippets/first_10s \
+  --clip-dir data/epic_kitchens/video_snippets/test_set/inputs \
   --output-root outputs/han_baseline_smoke \
-  --target-fps 20 \
+  --target-fps 10 \
   --max-frames 3 \
   --device cuda
 ```
@@ -237,9 +222,9 @@ Combination1 smoke:
 
 ```bash
 PYTHONPATH=src python -m pipelines.combination1 \
-  --clip-dir data/epic_kitchens/video_snippets/first_10s \
+  --clip-dir data/epic_kitchens/video_snippets/test_set/inputs \
   --output-root outputs/combination1_smoke \
-  --target-fps 20 \
+  --target-fps 10 \
   --max-frames 3 \
   --device cuda \
   --deva-memory-reset-interval 1
@@ -268,24 +253,24 @@ Run the baseline first. This is mandatory.
 
 ```bash
 PYTHONPATH=src python -m pipelines.han_baseline \
-  --clip-dir data/epic_kitchens/video_snippets/first_10s \
-  --output-root outputs/han_baseline_data_first10 \
-  --target-fps 20 \
+  --clip-dir data/epic_kitchens/video_snippets/test_set/inputs \
+  --output-root outputs/han_baseline_test_set \
+  --target-fps 10 \
   --device cuda
 
 PYTHONPATH=src python -m evaluation.pipeline_outputs \
   --data-root data/epic_kitchens \
-  --output-root outputs/han_baseline_data_first10 \
-  --results-dir outputs/evaluation/han_baseline_data_first10
+  --output-root outputs/han_baseline_test_set \
+  --results-dir outputs/evaluation/han_baseline_test_set
 ```
 
 Then run `combination1`:
 
 ```bash
 PYTHONPATH=src python -m pipelines.combination1 \
-  --clip-dir data/epic_kitchens/video_snippets/first_10s \
-  --output-root outputs/combination1_epic10 \
-  --target-fps 20 \
+  --clip-dir data/epic_kitchens/video_snippets/test_set/inputs \
+  --output-root outputs/combination1_test_set \
+  --target-fps 10 \
   --device cuda \
   --deva-detection-every 1 \
   --deva-memory-reset-interval 4 \
@@ -293,8 +278,8 @@ PYTHONPATH=src python -m pipelines.combination1 \
 
 PYTHONPATH=src python -m evaluation.pipeline_outputs \
   --data-root data/epic_kitchens \
-  --output-root outputs/combination1_epic10 \
-  --results-dir outputs/evaluation/combination1_epic10
+  --output-root outputs/combination1_test_set \
+  --results-dir outputs/evaluation/combination1_test_set
 ```
 
 `evaluation.pipeline_outputs` is the shared evaluator for any pipeline that
@@ -306,7 +291,7 @@ produces the same output directory contract: `frames/`,
 Baseline:
 
 ```text
-outputs/han_baseline_data_first10/<clip>/
+outputs/han_baseline_test_set/<clip>/
   frames/
   saliency_frames/
   segmentation_frames/
@@ -318,7 +303,7 @@ outputs/han_baseline_data_first10/<clip>/
 Combination1:
 
 ```text
-outputs/combination1_epic10/<clip>/
+outputs/combination1_test_set/<clip>/
   frames/
   saliency_frames/
   segmentation_frames/

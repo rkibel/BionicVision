@@ -31,7 +31,7 @@ from torchvision.transforms import Compose
 
 ROOT = Path(__file__).resolve().parents[1]
 EXTERNAL = ROOT / "external" / "model_sources"
-DEFAULT_CLIP_DIR = ROOT / "data" / "epic_kitchens" / "clips_10s"
+DEFAULT_CLIP_DIR = ROOT / "data" / "epic_kitchens" / "video_snippets" / "test_set" / "inputs"
 DEFAULT_OUTPUT = ROOT / "outputs" / "named_model_proofs"
 PYTHON = ROOT / ".venv-models" / "bin" / "python"
 
@@ -229,7 +229,7 @@ def run_mit_scene_parsing(frames: list[Path], output_root: Path, device: torch.d
     import torchvision.transforms as transforms
 
     source = EXTERNAL / "segmentation" / "semantic-segmentation-pytorch"
-    weights = ROOT / "data" / "model_weights" / "mit_scene_parsing" / "ade20k-resnet50dilated-ppm_deepsup"
+    weights = ROOT / "external" / "model_weights" / "mit_scene_parsing" / "ade20k-resnet50dilated-ppm_deepsup"
     colors = loadmat(source / "data" / "color150.mat")["colors"]
 
     encoder = ModelBuilder.build_encoder(

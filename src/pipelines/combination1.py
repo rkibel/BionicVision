@@ -33,8 +33,8 @@ from .han_baseline import (
 
 
 ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_COMBINATION1_CLIP_DIR = ROOT / "data" / "epic_kitchens" / "video_snippets" / "first_10s"
-DEFAULT_COMBINATION1_OUTPUT = ROOT / "outputs" / "combination1_epic10"
+DEFAULT_COMBINATION1_CLIP_DIR = ROOT / "data" / "epic_kitchens" / "video_snippets" / "test_set" / "inputs"
+DEFAULT_COMBINATION1_OUTPUT = ROOT / "outputs" / "combination1_test_set"
 
 
 @dataclass(frozen=True)
@@ -224,11 +224,14 @@ def combine_combination1_frames(
     return output_paths
 
 
-def parse_clip_name(name: str) -> tuple[str, int, int]:
+def parse_clip_name(name: str) -> tuple[str, int | None, int | None]:
     match = re.match(r"(?P<video>P\d+_\d+)_frames_(?P<start>\d+)_(?P<end>\d+)$", name)
+    if match:
+        return match.group("video"), int(match.group("start")), int(match.group("end"))
+    match = re.match(r"(?P<video>P\d+_\d+)_test_frames$", name)
     if not match:
         raise ValueError(f"Could not parse EPIC clip name: {name}")
-    return match.group("video"), int(match.group("start")), int(match.group("end"))
+    return match.group("video"), None, None
 
 
 def main() -> None:
