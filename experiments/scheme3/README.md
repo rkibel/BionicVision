@@ -106,6 +106,23 @@ cyan = hands
 red  = object track whose calibrated score >= threshold
 ```
 
+## Train Hand Segmentor
+
+```bash
+.venv-models/bin/python experiments/scheme3/train_hand_segmentor.py \
+  --data-root data/egohos/data \
+  --output-dir outputs/experiments/scheme3/hand_segmentor \
+  --model smp-unetpp-efficientnet-b4 \
+  --image-size 512x704 \
+  --epochs 80 \
+  --batch-size 4 \
+  --amp \
+  --device cuda
+```
+
+The saved `best.pt` checkpoint includes the `model_name`, `image_size`,
+`threshold`, and model state expected by `run_pipeline.py`.
+
 ## Evaluate Cached Policy
 
 ```bash
@@ -125,6 +142,7 @@ run_pipeline.py
 evaluate_track_policy_cache.py
 train_set_selector.py
 train_greedy_selector.py
+train_hand_segmentor.py
 README.md
 EXPERIMENT_LOG.md
 ```
@@ -152,4 +170,3 @@ unsupervised_30s_runs/
     contact_sheet.jpg
     manifest.json
 ```
-
