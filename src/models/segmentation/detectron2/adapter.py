@@ -11,6 +11,9 @@ from models.base import ModelSpec
 
 
 DEFAULT_IMPORTANT_CLASSES = (0, 1, 2, 5, 7)
+ROOT = Path(__file__).resolve().parents[4]
+MODEL_ZOO_CONFIG = "COCO-InstanceSegmentation/mask_rcnn_R_50_FPN_3x.yaml"
+DEFAULT_WEIGHTS = ROOT / "external" / "model_sources" / "segmentation" / "detectron2" / "weights" / "mask_rcnn_R_50_FPN_3x" / "model_final_f10217.pkl"
 DETECTRON2_SPEC = ModelSpec(
     name="detectron2_mask_rcnn",
     task="segmentation",
@@ -29,10 +32,10 @@ def build_predictor(*, device: str = "cuda", score_threshold: float = 0.5):
 
     setup_logger()
     cfg = get_cfg()
-    cfg.merge_from_file(model_zoo.get_config_file("COCO-InstanceSegmentation/mask_rcnn_R_50_FPN_3x.yaml"))
+    cfg.merge_from_file(model_zoo.get_config_file(MODEL_ZOO_CONFIG))
     cfg.MODEL.DEVICE = device
     cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = score_threshold
-    cfg.MODEL.WEIGHTS = model_zoo.get_checkpoint_url("COCO-InstanceSegmentation/mask_rcnn_R_50_FPN_3x.yaml")
+    cfg.MODEL.WEIGHTS = str(DEFAULT_WEIGHTS) if DEFAULT_WEIGHTS.exists() else model_zoo.get_checkpoint_url(MODEL_ZOO_CONFIG)
     return DefaultPredictor(cfg)
 
 

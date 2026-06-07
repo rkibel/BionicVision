@@ -159,7 +159,7 @@ def run_deva_manual(
     memory_reset_interval: int = 4,
     dino_threshold: float = 0.35,
     dino_nms_threshold: float = 0.8,
-    sam_variant: str = "original",
+    sam_variant: str = "sam_hq_light",
 ) -> ManualDevaOutputs:
     """Run text-prompted DEVA with fixed class groups.
 
@@ -205,6 +205,12 @@ def run_deva_manual(
         str(DEVA_ROOT / "saves" / "groundingdino_swint_ogc.pth"),
         "--SAM_CHECKPOINT_PATH",
         str(DEVA_ROOT / "saves" / "sam_vit_h_4b8939.pth"),
+        "--HQ_SAM_CHECKPOINT_PATH",
+        str(DEVA_ROOT / "saves" / "sam_hq_vit_h.pth"),
+        "--LIGHT_HQ_SAM_CHECKPOINT_PATH",
+        str(DEVA_ROOT / "saves" / "sam_hq_vit_tiny.pth"),
+        "--MOBILE_SAM_CHECKPOINT_PATH",
+        str(DEVA_ROOT / "saves" / "mobile_sam.pt"),
         "--DINO_THRESHOLD",
         str(dino_threshold),
         "--DINO_NMS_THRESHOLD",

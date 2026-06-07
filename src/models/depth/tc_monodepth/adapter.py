@@ -11,7 +11,6 @@ import cv2
 import numpy as np
 
 from models.base import ModelSpec
-from models.depth.cached import normalize_depth
 
 
 ROOT = Path(__file__).resolve().parents[4]
@@ -37,6 +36,18 @@ def assert_tc_monodepth_available() -> None:
     if missing:
         details = ", ".join(str(path) for path in missing)
         raise FileNotFoundError(f"TCMonoDepth external files are missing: {details}")
+
+
+def normalize_depth(depth: np.ndarray) -> np.ndarray:
+    values = np.asarray(depth, dtype=np.float32)
+    finite = np.isfinite(values)
+    if not finite.any():
+        return np.zeros(values.shape, dtype=np.float32)
+    min_value = float(values[finite].min())
+    max_value = float(values[finite].max())
+    if max_value <= min_value:
+        return np.zeros(values.shape, dtype=np.float32)
+    return np.clip((values - min_value) / (max_value - min_value), 0, 1).astype(np.float32)
 
 
 @dataclass

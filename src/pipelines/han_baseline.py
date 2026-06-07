@@ -22,7 +22,6 @@ from PIL import Image, ImageFilter
 from skimage import morphology
 import torch
 
-from models.depth.cached import load_depth
 from models.depth.monodepth2.adapter import predict_depth_folder
 from models.saliency.deepgaze2.adapter import compute_saliency
 from models.segmentation.detectron2.adapter import build_predictor, predict_important_mask_from_image
@@ -88,6 +87,16 @@ COCO_IMPORTANT_CLASSES = (
     76,  # scissors
     79,  # toothbrush
 )
+
+
+def load_depth(path: str | Path, *, mmap: bool = False) -> np.ndarray:
+    depth_path = Path(path)
+    if depth_path.suffix.lower() == ".npy":
+        return np.load(depth_path, mmap_mode="r" if mmap else None)
+    image = cv2.imread(str(depth_path), cv2.IMREAD_GRAYSCALE)
+    if image is None:
+        raise FileNotFoundError(f"Could not load image: {depth_path}")
+    return image.astype(np.float32)
 
 
 @dataclass(frozen=True)

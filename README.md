@@ -2,11 +2,13 @@
 
 This repository reproduces the Han et al. 2021 scene-simplification baseline on
 EPIC-KITCHENS clips, evaluates those outputs against VISOR annotations, and adds
-`combination1`: the same Han fusion scheme with temporal model inputs
+`han_fusion_temporal_models`: the same Han fusion scheme with temporal model inputs
 (DeepGaze III, TCMonoDepth, and fixed-prompt manual DEVA).
+It also includes `scheme1`, a DEVA-only indoor kitchen segmentation pipeline
+with temporal propagation and no hand prompts.
 
 Baseline reproduction is mandatory for this project. Run and evaluate the Han
-baseline before comparing `combination1`; the comparison is only meaningful when
+baseline before comparing `han_fusion_temporal_models`; the comparison is only meaningful when
 both outputs are produced from the same clips, frame rate, environment, and
 evaluation code.
 
@@ -30,15 +32,22 @@ PYTHONPATH=src python -m evaluation.pipeline_outputs \
   --output-root outputs/han_baseline_test_set \
   --results-dir outputs/evaluation/han_baseline_test_set
 
-# Combination1 after the baseline exists.
-PYTHONPATH=src python -m pipelines.combination1 \
+# Han fusion with temporal models after the baseline exists.
+PYTHONPATH=src python -m pipelines.han_fusion_temporal_models \
   --clip-dir data/epic_kitchens/video_snippets/test_set/inputs \
-  --output-root outputs/combination1_test_set \
+  --output-root outputs/han_fusion_temporal_models_test_set \
   --target-fps 10 \
   --device cuda
 
 PYTHONPATH=src python -m evaluation.pipeline_outputs \
   --data-root data/epic_kitchens \
-  --output-root outputs/combination1_test_set \
-  --results-dir outputs/evaluation/combination1_test_set
+  --output-root outputs/han_fusion_temporal_models_test_set \
+  --results-dir outputs/evaluation/han_fusion_temporal_models_test_set
+
+# Scheme 1: DEVA-only indoor kitchen segmentation.
+PYTHONPATH=src python -m pipelines.scheme1 \
+  --clip-dir data/epic_kitchens/video_snippets/test_set/inputs \
+  --output-root outputs/scheme1_test_set \
+  --target-fps 10 \
+  --device cuda
 ```

@@ -23,4 +23,4 @@ deepgaze @ git+https://github.com/mpatacchiola/deepgaze.git@fddc129da9692d7a2002
 deepgaze_pytorch @ git+https://github.com/matthias-k/DeepGaze.git@c87b106e8698497c59998b469c45770e993baca3
 detectron2 @ git+https://github.com/facebookresearch/detectron2.git@e0ec4e189d438848521aee7926f9900e114229f5
 mit_semseg @ git+https://github.com/CSAILVision/semantic-segmentation-pytorch.git@8f27c9b97d2ca7c6e05333d5766d144bf7d8c31b
-segment_anything @ git+https://github.com/facebookresearch/segment-anything.git@dca509fe793f601edb92606367a655c15ac00fdf
+segment_anything @ git+https://github.com/SysCV/sam-hq.git@e696978d60352dc9a26b12631cd91781502c6546
