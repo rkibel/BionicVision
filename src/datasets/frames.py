@@ -2,54 +2,11 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import Path
-import re
-from typing import Iterable, Sequence
 
 import cv2
 import imageio.v2 as imageio
 import numpy as np
-
-IMAGE_EXTENSIONS = {".bmp", ".jpeg", ".jpg", ".png", ".tif", ".tiff"}
-
-
-@dataclass(frozen=True)
-class FrameSequence:
-    """Ordered frame paths with lightweight metadata."""
-
-    paths: tuple[Path, ...]
-    fps: float | None = None
-
-    def __len__(self) -> int:
-        return len(self.paths)
-
-    def __iter__(self):
-        return iter(self.paths)
-
-
-def natural_sort_key(path: Path | str) -> list[int | str]:
-    """Sort paths by embedded numbers, e.g. frame_2 before frame_10."""
-
-    text = str(path)
-    return [int(part) if part.isdigit() else part.lower() for part in re.split(r"(\d+)", text)]
-
-
-def list_frames(
-    folder: str | Path,
-    *,
-    extensions: Iterable[str] = IMAGE_EXTENSIONS,
-    recursive: bool = False,
-) -> list[Path]:
-    """Return image frame paths in stable natural order."""
-
-    root = Path(folder)
-    allowed = {ext.lower() for ext in extensions}
-    pattern = "**/*" if recursive else "*"
-    return sorted(
-        (p for p in root.glob(pattern) if p.is_file() and p.suffix.lower() in allowed),
-        key=natural_sort_key,
-    )
 
 
 def load_rgb(path: str | Path) -> np.ndarray:
@@ -95,10 +52,3 @@ def normalize_to_uint8(values: np.ndarray) -> np.ndarray:
         return np.zeros(array.shape, dtype=np.uint8)
     scaled = (array - min_value) / (max_value - min_value)
     return np.clip(scaled * 255.0, 0, 255).astype(np.uint8)
-
-
-def load_npy_sequence(paths: Sequence[str | Path]) -> list[np.ndarray]:
-    """Load a sequence of NumPy arrays."""
-
-    return [np.load(Path(path)) for path in paths]
-

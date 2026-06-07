@@ -125,26 +125,3 @@ normalization or adaptive brightness thresholds.
 
 Active area is in `[0, 1]`: it is the average fraction of pixels above the fixed
 activity threshold.
-
-## Tiny User Study
-
-Use a lightweight 2AFC preference task as perceptual validation.
-
-Stimulus:
-
-- Short SPV clips, approximately 2-4 seconds.
-- Baseline and proposed method, randomized order.
-
-Prompt:
-
-```text
-Which video better shows what the person is doing?
-```
-
-Report:
-
-- Percent of trials where participants prefer the proposed method.
-- Optional confidence rating.
-
-This is not meant to replace the quantitative metrics. It verifies whether the
-metric improvements correspond to perceived clarity.
