@@ -1,172 +1,126 @@
 # Scheme 3
 
-Scheme 3 is the interaction-aware scene simplification pipeline:
+Scheme 3 trains a dense U-Net++ object mask from two signals:
 
-```text
-video
-  -> EgoHOS hand segmentor
-  -> non-oracle object proposals and SAM2 track cache
-  -> learned track-set selector
-  -> calibrated one-score threshold
-  -> cyan hands + red selected object tracks
+- supervised object-union masks from Ego-Exo4D and EgoHOS
+- unsupervised optical-flow consistency between nearby Ego-Exo video frames
+
+The hand segmentor is used only as an input prior. The dense model predicts the
+object/interaction mask.
+
+## Retained Checkpoints
+
+Current best broad-object model:
+
+```
+outputs/experiments/scheme3/checkpoints/dense_union_unetpp_b4_raw_ring_outer_distance_egohos_ego4dweight_v7.pt
 ```
 
-This replaces the separate `hand_segmentor` and `object_track_selector`
-experiments with one minimal runnable experiment.
+Original dense baseline:
 
-## Current Best Result
-
-Held-out Ego-Exo4D clip:
-
-```text
-take: sfu_cooking_008_3
-camera: aria01_214-1
-frames: 3150-4050
-duration: 30 seconds
-sampled FPS: 6
+```
+outputs/experiments/scheme3/checkpoints/dense_union_unetpp_b4_raw_ring_outer_distance_finetune.pt
 ```
 
-Metrics:
+Hand-prior checkpoint required by both:
 
-```text
-selected_union_mean_iou: 0.7190
-selected_temporal_union_iou: 0.4663
-selected_mean_count: 5.43 red tracks/frame
-proposal recall@0.5: 0.3621
-medium-object recall@0.5: 0.7700
-large-object recall@0.5: 1.0000
 ```
-
-The score crosses `0.7` using the best cached non-oracle detector/SAM2 proposal
-volume. Fresh proposal regeneration is still the main bottleneck, especially
-for small 448px objects.
-
-## Models
-
-Hand model:
-
-```text
 outputs/experiments/scheme3/hand_segmentor/best.pt
-architecture: U-Net++ EfficientNet-B4
-input size: 512x704
-EgoHOS dev IoU: 0.9234
-threshold: 0.65
 ```
 
-Track selector:
+See `OUTPUTS.md` for the retained artifact list and reference metrics.
 
-```text
-outputs/experiments/scheme3/track_score_model/set_selector_dense2_to_denseval.pt
+## Files
+
+```
+dataset_loaders/           Ego-Exo, Ego-Exo flow-pair, and EgoHOS datasets
+training/                  dataset assembly, losses, train loop, and flow loss
+evaluation/                metric primitives, runtime loading, supervised IoU, and flow evaluation
+models/                    dense relevance model and hand-prior model wrapper
+config.py                  shared paths and defaults
+utils.py                   parsing, JSON, seeding, and small numeric helpers
+train_dense_union.py       training CLI
+evaluate_dense_union.py evaluation CLI
+render_dense_union.py      render any checkpoint on an Ego-Exo take or video path
+hand_segmentor/            hand-prior training/evaluation code
 ```
 
-Calibrated policy:
+Historical logs remain in `LOG_V*.md`, but current code paths are concentrated
+in the files above.
 
-```text
-outputs/experiments/scheme3/track_score_model/calibrated_track_policy_dense2_static_gate.joblib
-threshold: 0.52
-set score weight: 0.475
-raw heuristic weight: 0.525
-temporal smoothing alpha: 0.96
-track score quantile: 0.80
-```
+## Train
 
-## Run Best Pipeline
+Default training starts from v7 and writes a new candidate checkpoint:
 
 ```bash
-.venv-models/bin/python experiments/scheme3/run_pipeline.py \
-  --input data/egoexo4d/takes/sfu_cooking_008_3/frame_aligned_videos/downscaled/448/aria01_214-1.mp4 \
-  --output-dir outputs/experiments/scheme3/unsupervised_30s_runs \
-  --run-name replay_val_sfu008_3150_4050_cache_policy_render \
-  --start-frame 3150 \
+.venv-models/bin/python experiments/scheme3/train_dense_union.py \
+  --output outputs/experiments/scheme3/checkpoints/dense_union_unetpp_b4_raw_ring_outer_distance_egohos_next.pt \
+  --summary-output outputs/experiments/scheme3/checkpoints/dense_union_unetpp_b4_raw_ring_outer_distance_egohos_next_summary.json
+```
+
+A quick smoke run uses the reduced deterministic preset:
+
+```bash
+.venv-models/bin/python experiments/scheme3/train_dense_union.py --dev-run \
+  --output /tmp/scheme3_dev.pt \
+  --summary-output /tmp/scheme3_dev_summary.json
+```
+
+Useful knobs that remain:
+
+```
+--source-loss-weights ego4d:2.25,youtube:1.25
+--flow-pair-weight 0.10
+--flow-pair-offsets 1,-1,2,-2,5,-5,10,-10
+--save-selection best_min_supervised
+--egohos-selection-stat source_min
+```
+
+Removed trial paths include EPIC active-object supervision, VISOR hand-object
+supervision, distillation, hard-sample weighting, small-target reweighting,
+Sobel image channels, frozen encoder training, Lovasz/focal experiments, and
+diagnostic contact-sheet export.
+
+## Evaluate
+
+Evaluate v7 with postprocessed supervised and temporal metrics:
+
+```bash
+.venv-models/bin/python experiments/scheme3/evaluate_dense_union.py \
+  --checkpoint outputs/experiments/scheme3/checkpoints/dense_union_unetpp_b4_raw_ring_outer_distance_egohos_ego4dweight_v7.pt \
+  --output outputs/experiments/scheme3/checkpoints/dense_union_motion_metric_egohos_ego4dweight_v7.json
+```
+
+The evaluator reports:
+
+```
+egoexo_supervised
+egohos_supervised
+video_temporal.sparse_gt_frames
+video_temporal.full_fps.full_fps_flow_temporal_by_horizon
+```
+
+The temporal metric is unsupervised: predictions are postprocessed first, then
+warped with Farneback flow and compared across frame horizons.
+
+## Render
+
+Render an Ego-Exo take:
+
+```bash
+.venv-models/bin/python experiments/scheme3/render_dense_union.py \
+  --output-dir outputs/experiments/scheme3/qualitative_runs/v7_target
+```
+
+Render an arbitrary video:
+
+```bash
+.venv-models/bin/python experiments/scheme3/render_dense_union.py \
+  --input-video /path/to/video.mp4 \
+  --start-frame 0 \
   --duration-seconds 30 \
-  --stride 5 \
-  --width 448 \
-  --height 448 \
-  --load-track-cache outputs/experiments/scheme3/unsupervised_30s_runs/val_sfu008_3150_4050_dense_s64_c15_cache/track_cache.npz \
-  --score-model outputs/experiments/scheme3/track_score_model/calibrated_track_policy_dense2_static_gate.joblib \
-  --take-uid 44d647ce-72d2-4312-b80c-99faea2d017d \
-  --camera-name aria01_214-1 \
-  --gt-window-start 3150 \
-  --gt-window-end 4050 \
-  --overwrite \
-  --device cuda
+  --output-dir outputs/experiments/scheme3/qualitative_runs/v7_custom_video
 ```
 
-Rendered artifacts:
-
-```text
-outputs/experiments/scheme3/unsupervised_30s_runs/replay_val_sfu008_3150_4050_cache_policy_render/overlay.mp4
-outputs/experiments/scheme3/unsupervised_30s_runs/replay_val_sfu008_3150_4050_cache_policy_render/contact_sheet.jpg
-```
-
-Colors:
-
-```text
-cyan = hands
-red  = object track whose calibrated score >= threshold
-```
-
-## Train Hand Segmentor
-
-```bash
-.venv-models/bin/python experiments/scheme3/train_hand_segmentor.py \
-  --data-root data/egohos/data \
-  --output-dir outputs/experiments/scheme3/hand_segmentor \
-  --model smp-unetpp-efficientnet-b4 \
-  --image-size 512x704 \
-  --epochs 80 \
-  --batch-size 4 \
-  --amp \
-  --device cuda
-```
-
-The saved `best.pt` checkpoint includes the `model_name`, `image_size`,
-`threshold`, and model state expected by `run_pipeline.py`.
-
-## Evaluate Cached Policy
-
-```bash
-.venv-models/bin/python experiments/scheme3/evaluate_track_policy_cache.py \
-  --track-cache outputs/experiments/scheme3/unsupervised_30s_runs/val_sfu008_3150_4050_dense_s64_c15_cache/track_cache.npz \
-  --score-model outputs/experiments/scheme3/track_score_model/calibrated_track_policy_dense2_static_gate.joblib \
-  --device cuda
-```
-
-## Retained Files
-
-Code:
-
-```text
-common.py
-run_pipeline.py
-evaluate_track_policy_cache.py
-train_set_selector.py
-train_greedy_selector.py
-train_hand_segmentor.py
-README.md
-EXPERIMENT_LOG.md
-```
-
-Outputs:
-
-```text
-hand_segmentor/
-  best.pt
-  dev_summary.json
-  split_summary.json
-
-track_score_model/
-  set_selector_dense2_to_denseval.pt
-  calibrated_track_policy_dense2_static_gate.joblib
-  summary_set_selector_dense2_to_denseval.json
-  summary_calibrated_track_policy_dense2_static_gate.json
-
-unsupervised_30s_runs/
-  val_sfu008_3150_4050_dense_s64_c15_cache/
-    track_cache.npz
-    manifest.json
-  replay_val_sfu008_3150_4050_cache_policy_render/
-    overlay.mp4
-    contact_sheet.jpg
-    manifest.json
-```
+Rendered videos and masks are treated as disposable qualitative outputs and are
+not retained in the cleaned `outputs/experiments/scheme3` tree.

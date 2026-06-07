@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import random
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -16,12 +17,18 @@ import torch.nn.functional as F
 from torch import nn
 from torch.utils.data import DataLoader, Dataset
 
-from common import OUTPUT_DIR, write_json
+SCHEME_DIR = Path(__file__).resolve().parents[1]
+if str(SCHEME_DIR) not in sys.path:
+    sys.path.insert(0, str(SCHEME_DIR))
+
+from hand_segmentor.model import build_model
 
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
+OUTPUT_DIR = ROOT / "outputs/experiments/scheme3"
 DEFAULT_DATA_ROOT = ROOT / "data/egohos/data"
-DEFAULT_OUTPUT_DIR = ROOT / OUTPUT_DIR / "hand_segmentor"
+DEFAULT_OUTPUT_DIR = OUTPUT_DIR / "hand_segmentor"
+DEFAULT_HAND_LABELS = "1,2"
 MEAN = torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1)
 STD = torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1)
 
@@ -43,6 +50,11 @@ def main() -> None:
     parser.add_argument("--workers", type=int, default=2)
     parser.add_argument("--tversky-beta", type=float, default=0.55, help="Higher values penalize false negatives more.")
     parser.add_argument("--thresholds", default="0.35,0.4,0.45,0.5,0.55,0.6,0.65,0.7,0.75")
+    parser.add_argument(
+        "--positive-labels",
+        default=DEFAULT_HAND_LABELS,
+        help="Comma-separated EgoHOS label ids treated as positive. Default 1,2 = left/right hand.",
+    )
     parser.add_argument("--train-split", default="train")
     parser.add_argument("--val-split", default="val")
     parser.add_argument("--eval-split", default="val")
@@ -56,16 +68,17 @@ def main() -> None:
     set_seed(args.seed)
     image_size = parse_size(args.image_size)
     thresholds = parse_thresholds(args.thresholds)
+    positive_labels = parse_positive_labels(args.positive_labels)
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
     if args.mode == "train":
         train_items = dataset_items(args.data_root, args.train_split)
         val_items = dataset_items(args.data_root, args.val_split)
-        write_json(args.output_dir / "split_summary.json", split_summary(args.train_split, train_items, args.val_split, val_items))
+        write_json(args.output_dir / "split_summary.json", split_summary(args.train_split, train_items, args.val_split, val_items, positive_labels))
         model = build_model(args.model, args.device, encoder_weights=encoder_weights(args.encoder_weights))
         if args.init_checkpoint is not None:
             load_model_state(model, args.init_checkpoint, args.device)
-        train_model(model, args, train_items, val_items, image_size, thresholds)
+        train_model(model, args, train_items, val_items, image_size, thresholds, positive_labels)
         return
 
     checkpoint_path = args.checkpoint or args.output_dir / "best.pt"
@@ -76,8 +89,9 @@ def main() -> None:
     model.load_state_dict(checkpoint["model"])
     checkpoint_size = parse_size(str(checkpoint.get("image_size", args.image_size)))
     threshold = float(checkpoint.get("threshold", thresholds[-1]))
+    positive_labels = tuple(int(label) for label in checkpoint.get("positive_labels", positive_labels))
     write_dir = args.output_dir / args.eval_split / "masks" if args.write_masks else None
-    summary = evaluate(model, eval_items, checkpoint_size, args.device, [threshold], args.workers, write_dir=write_dir, tta_flip=args.tta_flip)
+    summary = evaluate(model, eval_items, checkpoint_size, args.device, [threshold], args.workers, positive_labels, write_dir=write_dir, tta_flip=args.tta_flip)
     write_json(args.output_dir / f"{args.eval_split}_summary.json", summary)
     if args.eval_split == "val":
         write_json(args.output_dir / "dev_summary.json", summary)
@@ -86,7 +100,10 @@ def main() -> None:
 
 def parse_size(value: str) -> tuple[int, int]:
     height, width = value.lower().split("x", maxsplit=1)
-    return int(height), int(width)
+    size = int(height), int(width)
+    if size[0] % 32 != 0 or size[1] % 32 != 0:
+        raise ValueError(f"Image size must be divisible by 32 for the SMP encoders, got {value}")
+    return size
 
 
 def parse_thresholds(value: str) -> list[float]:
@@ -94,6 +111,18 @@ def parse_thresholds(value: str) -> list[float]:
     if not thresholds:
         raise ValueError("At least one threshold is required")
     return thresholds
+
+
+def parse_positive_labels(value: str) -> tuple[int, ...]:
+    labels = tuple(int(part) for part in value.split(",") if part.strip())
+    if not labels:
+        raise ValueError("At least one positive EgoHOS label is required")
+    return labels
+
+
+def write_json(path: Path, payload: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
 def encoder_weights(value: str) -> str | None:
@@ -127,12 +156,20 @@ def dataset_items(data_root: Path, split_value: str) -> list[tuple[Path, Path, s
     return items
 
 
-def split_summary(train_split: str, train_items: list[tuple[Path, Path, str]], val_split: str, val_items: list[tuple[Path, Path, str]]) -> dict[str, Any]:
+def split_summary(
+    train_split: str,
+    train_items: list[tuple[Path, Path, str]],
+    val_split: str,
+    val_items: list[tuple[Path, Path, str]],
+    positive_labels: tuple[int, ...],
+) -> dict[str, Any]:
     return {
         "train_split": train_split,
         "train_items": len(train_items),
         "val_split": val_split,
         "val_items": len(val_items),
+        "positive_labels": list(positive_labels),
+        "target": "egohos_hand_only",
         "train_by_split": count_by_split(train_items),
         "val_by_split": count_by_split(val_items),
     }
@@ -146,10 +183,11 @@ def count_by_split(items: list[tuple[Path, Path, str]]) -> dict[str, int]:
 
 
 class EgoHOSDataset(Dataset):
-    def __init__(self, items: list[tuple[Path, Path, str]], image_size: tuple[int, int], augment: bool):
+    def __init__(self, items: list[tuple[Path, Path, str]], image_size: tuple[int, int], augment: bool, positive_labels: tuple[int, ...]):
         self.items = items
         self.image_size = image_size
         self.augment = augment
+        self.positive_labels = positive_labels
 
     def __len__(self) -> int:
         return len(self.items)
@@ -157,7 +195,7 @@ class EgoHOSDataset(Dataset):
     def __getitem__(self, index: int):
         image_path, label_path, split = self.items[index]
         image = read_rgb(image_path)
-        mask = read_mask(label_path)
+        mask = read_mask(label_path, self.positive_labels)
         if self.augment:
             image, mask = augment_pair(image, mask)
         image = cv2.resize(image, (self.image_size[1], self.image_size[0]), interpolation=cv2.INTER_AREA)
@@ -175,11 +213,11 @@ def read_rgb(path: Path) -> np.ndarray:
     return cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
 
-def read_mask(path: Path) -> np.ndarray:
+def read_mask(path: Path, positive_labels: tuple[int, ...]) -> np.ndarray:
     mask = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
     if mask is None:
         raise RuntimeError(f"Could not read mask: {path}")
-    return mask > 0
+    return np.isin(mask, np.asarray(positive_labels, dtype=mask.dtype))
 
 
 def augment_pair(image: np.ndarray, mask: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -223,20 +261,6 @@ def random_zoom_pair(image: np.ndarray, mask: np.ndarray) -> tuple[np.ndarray, n
     return image_out, mask_out
 
 
-def build_model(model_name: str, device: str, *, encoder_weights: str | None) -> nn.Module:
-    import segmentation_models_pytorch as smp
-
-    if model_name == "smp-unetpp-efficientnet-b4":
-        model = smp.UnetPlusPlus(encoder_name="efficientnet-b4", encoder_weights=encoder_weights, in_channels=3, classes=1)
-    elif model_name == "smp-unetpp-resnet101":
-        model = smp.UnetPlusPlus(encoder_name="resnet101", encoder_weights=encoder_weights, in_channels=3, classes=1)
-    elif model_name == "smp-deeplabv3plus-resnet101":
-        model = smp.DeepLabV3Plus(encoder_name="resnet101", encoder_weights=encoder_weights, in_channels=3, classes=1)
-    else:
-        raise ValueError(f"Unsupported model: {model_name}")
-    return model.to(device)
-
-
 def load_model_state(model: nn.Module, checkpoint_path: Path, device: str) -> None:
     checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
     model.load_state_dict(checkpoint["model"])
@@ -249,11 +273,12 @@ def train_model(
     val_items: list[tuple[Path, Path, str]],
     image_size: tuple[int, int],
     thresholds: list[float],
+    positive_labels: tuple[int, ...],
 ) -> None:
     if len(train_items) < args.batch_size:
         raise ValueError(f"Not enough train frames for batch size {args.batch_size}: {len(train_items)}")
     train_loader = DataLoader(
-        EgoHOSDataset(train_items, image_size, augment=True),
+        EgoHOSDataset(train_items, image_size, augment=True, positive_labels=positive_labels),
         batch_size=args.batch_size,
         shuffle=True,
         num_workers=args.workers,
@@ -279,7 +304,7 @@ def train_model(
             scaler.step(optimizer)
             scaler.update()
             losses.append(float(loss.detach().cpu()))
-        summary = evaluate(model, val_items, image_size, args.device, thresholds, args.workers, write_dir=None, tta_flip=args.tta_flip)
+        summary = evaluate(model, val_items, image_size, args.device, thresholds, args.workers, positive_labels, write_dir=None, tta_flip=args.tta_flip)
         top = summary["best"]
         print(
             f"epoch {epoch} loss={np.mean(losses):.4f} "
@@ -293,6 +318,8 @@ def train_model(
                 "model_name": args.model,
                 "model": model.state_dict(),
                 "image_size": args.image_size,
+                "positive_labels": list(positive_labels),
+                "target": "egohos_hand_only",
                 "threshold": float(top["threshold"]),
                 "epoch": epoch,
                 "val_summary": summary,
@@ -346,11 +373,12 @@ def evaluate(
     device: str,
     thresholds: list[float],
     workers: int,
+    positive_labels: tuple[int, ...],
     *,
     write_dir: Path | None,
     tta_flip: bool = False,
 ) -> dict[str, Any]:
-    loader = DataLoader(EgoHOSDataset(items, image_size, augment=False), batch_size=1, shuffle=False, num_workers=workers)
+    loader = DataLoader(EgoHOSDataset(items, image_size, augment=False, positive_labels=positive_labels), batch_size=1, shuffle=False, num_workers=workers)
     model.eval()
     records_by_threshold: dict[float, list[dict[str, Any]]] = {threshold: [] for threshold in thresholds}
     for images, masks, stems, splits in loader:
@@ -368,7 +396,7 @@ def evaluate(
                 cv2.imwrite(str(threshold_dir / f"{stem}.png"), pred.astype(np.uint8) * 255)
     rows = [{"threshold": threshold, **summarize_records(records), "by_split": per_split(records)} for threshold, records in records_by_threshold.items()]
     rows.sort(key=lambda row: (row["mean_iou"], row["mean_precision"]), reverse=True)
-    return {"best": rows[0], "thresholds": rows}
+    return {"best": rows[0], "thresholds": rows, "positive_labels": list(positive_labels), "target": "egohos_hand_only"}
 
 
 def frame_record(stem: str, split: str, pred: np.ndarray, gt: np.ndarray) -> dict[str, Any]:
@@ -389,8 +417,8 @@ def mask_metrics(pred: np.ndarray, gt: np.ndarray) -> dict[str, float | None]:
     union = int(np.count_nonzero(pred | gt))
     return {
         "iou": intersection / union if union else None,
-        "precision": intersection / pred_count if pred_count else None,
-        "recall": intersection / gt_count if gt_count else None,
+        "precision": intersection / pred_count if pred_count else (None if gt_count == 0 else 0.0),
+        "recall": intersection / gt_count if gt_count else (None if pred_count == 0 else 0.0),
     }
 
 
