@@ -22,7 +22,7 @@ from config import (
     NEXT_DENSE_CHECKPOINT,
     SUPERVISED_LOSSES,
 )
-from models.dense import build_model, load_init_checkpoint, model_input_channels
+from models.dense import amplify_new_input_gradients, build_model, configure_training_stage, image_feature_channels, image_feature_diagnostics, input_convolution, load_init_checkpoint, model_input_channels
 from training.data import build_datasets, sample_loader
 from training.loop import build_summary, epoch_summary, evaluate_epoch, evaluate_named_splits, train_epoch
 from models.hand_prior import HandPrior
@@ -38,23 +38,43 @@ def main() -> None:
     target_loader = sample_loader(datasets["target"], args)
 
     model = build_model(args.encoder, args.encoder_weights, model_input_channels(args)).to(args.device)
-    init_metadata = load_init_checkpoint(model, args.init_checkpoint, args.device)
+    init_metadata = load_init_checkpoint(model, args.init_checkpoint, args.device, args.new_input_init, args.new_input_init_scale)
+    feature_channels = image_feature_channels(args.image_feature_mode)
+    staged = args.image_feature_stage_epochs > 0
+    if staged and feature_channels <= 0:
+        raise ValueError("--image-feature-stage-epochs requires an image feature mode")
+    args.gradient_scaled_parameter = None if staged else amplify_new_input_gradients(model, feature_channels, args.image_feature_gradient_scale)
     hand_prior = HandPrior(args.hand_checkpoint, args.device)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
+    if staged:
+        optimizer, args.gradient_scaled_parameter, args.stage_trainable_parameters = configure_training_stage(
+            model, "feature", feature_channels, args.image_feature_stage_learning_rate, args.image_feature_stage_learning_rate, args.weight_decay
+        )
+    else:
+        optimizer = torch.optim.AdamW(model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
+        args.stage_trainable_parameters = sum(parameter.numel() for parameter in model.parameters())
     scaler = torch.amp.GradScaler("cuda", enabled=args.device.startswith("cuda"))
     thresholds = parse_grid(args.threshold_grid)
+    _, initial_input_weight = input_convolution(model)
+    initial_input_weight = initial_input_weight.detach().cpu().clone()
 
     best_state = {key: value.detach().cpu() for key, value in model.state_dict().items()}
     best_val, best_named, best_score = evaluate_epoch(model, hand_prior, datasets, target_loader, args, thresholds)
     history = [epoch_summary(0, 0.0, 0.0, best_val, best_named, best_score, args.save_selection)]
+    add_feature_tracking(history[-1], model, hand_prior, datasets, target_loader, args, thresholds, initial_input_weight, feature_channels, "initial")
     if init_metadata:
         history[0]["init_checkpoint"] = init_metadata["checkpoint"]
     print(json.dumps(history[-1]), flush=True)
 
     for epoch in range(1, args.epochs + 1):
+        stage = "feature" if epoch <= args.image_feature_stage_epochs else "joint"
+        if staged and epoch == args.image_feature_stage_epochs + 1:
+            optimizer, args.gradient_scaled_parameter, args.stage_trainable_parameters = configure_training_stage(
+                model, "joint", feature_channels, args.learning_rate, args.joint_image_feature_learning_rate, args.weight_decay
+            )
         train_loss, flow_loss = train_epoch(model, hand_prior, optimizer, scaler, train_loader, flow_loader, args)
         val, named, selection_score = evaluate_epoch(model, hand_prior, datasets, target_loader, args, thresholds)
         history.append(epoch_summary(epoch, train_loss, flow_loss, val, named, selection_score, args.save_selection))
+        add_feature_tracking(history[-1], model, hand_prior, datasets, target_loader, args, thresholds, initial_input_weight, feature_channels, stage)
         print(json.dumps(history[-1]), flush=True)
         if args.save_selection == "last" or selection_score >= best_score:
             best_val, best_named, best_score = val, named, selection_score
@@ -62,7 +82,7 @@ def main() -> None:
 
     model.load_state_dict(best_state)
     final_named = evaluate_named_splits(model, hand_prior, datasets, target_loader, args, best_val["threshold"])
-    summary = build_summary(args, init_metadata, datasets, best_val, final_named, history, best_score)
+    summary = build_summary(model, args, init_metadata, datasets, best_val, final_named, history, best_score)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     torch.save({"state_dict": best_state, "args": vars(args), "summary": summary, "threshold": float(best_val["threshold"])}, args.output)
     write_json(args.summary_output, summary)
@@ -73,6 +93,30 @@ def make_flow_loader(dataset, args) -> DataLoader | None:
     if dataset is None or not len(dataset):
         return None
     return DataLoader(dataset, args.batch_size, shuffle=True, num_workers=args.num_workers, collate_fn=collate_flow_pairs)
+
+
+def add_feature_tracking(row, model, hand_prior, datasets, target_loader, args, thresholds, initial_input_weight, feature_channels, stage) -> None:
+    row["training_stage"] = stage
+    row["trainable_parameters"] = sum(parameter.numel() for parameter in model.parameters() if parameter.requires_grad)
+    if feature_channels <= 0:
+        return
+    row.update(image_feature_diagnostics(model, initial_input_weight, feature_channels))
+    if not args.track_image_feature_ablation:
+        return
+    _, weight = input_convolution(model)
+    saved = weight.data[:, -feature_channels:].clone()
+    weight.data[:, -feature_channels:] = 0.0
+    try:
+        _, named, score = evaluate_epoch(model, hand_prior, datasets, target_loader, args, thresholds)
+    finally:
+        weight.data[:, -feature_channels:] = saved
+    row["image_feature_ablation"] = {
+        "selection_score": score,
+        "selection_delta": row["selection_score"] - score,
+        "egoexo_iou": named["egoexo_val"]["selected_union_mean_iou"],
+        "egohos_iou": named["egohos_val"]["selected_union_mean_iou"],
+        "target_iou": named["target"]["selected_union_mean_iou"],
+    }
 
 
 def parse_args():
@@ -117,6 +161,8 @@ def parse_args():
     parser.add_argument("--tversky-alpha", type=float, default=0.35)
     parser.add_argument("--tversky-beta", type=float, default=0.65)
     parser.add_argument("--flow-pair-weight", type=float, default=0.10)
+    parser.add_argument("--flow-supervised-weight", type=float, default=1.0)
+    parser.add_argument("--temporal-only", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--flow-pair-samples", type=int, default=1200)
     parser.add_argument("--flow-steps-per-epoch", type=int, default=0)
     parser.add_argument("--flow-pair-offsets", default="1,-1,2,-2,5,-5,10,-10")
@@ -131,7 +177,15 @@ def parse_args():
     parser.add_argument("--hand-prior-power", type=float, default=1.5)
     parser.add_argument("--hand-input-mode", default="raw_ring_outer_distance")
     parser.add_argument("--hand-kernel-size", type=int, default=15)
-    parser.add_argument("--image-feature-mode", choices=("none",), default="none")
+    parser.add_argument("--image-feature-mode", choices=("none", "tc_monodepth", "glc_gaze"), default="none")
+    parser.add_argument("--image-feature-cache", type=Path, default=None)
+    parser.add_argument("--new-input-init", choices=("zero", "rgb_mean"), default="zero")
+    parser.add_argument("--new-input-init-scale", type=float, default=0.1)
+    parser.add_argument("--image-feature-gradient-scale", type=float, default=1.0)
+    parser.add_argument("--image-feature-stage-epochs", type=int, default=0)
+    parser.add_argument("--image-feature-stage-learning-rate", type=float, default=1e-4)
+    parser.add_argument("--joint-image-feature-learning-rate", type=float, default=1e-5)
+    parser.add_argument("--track-image-feature-ablation", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--save-selection", choices=("best_val", "best_egohos", "best_min_supervised", "last"), default="best_min_supervised")
     parser.add_argument("--threshold-selection", choices=("best_min_supervised", "val_objective"), default="best_min_supervised")
     parser.add_argument("--egohos-selection-stat", choices=("aggregate", "source_balanced", "source_min"), default="source_min")

@@ -21,6 +21,7 @@ from dataset_loaders.common import (
     egohos_source,
     read_egohos_label,
     read_rgb_image,
+    load_image_feature,
 )
 
 
@@ -44,6 +45,8 @@ class EgoHOSMaskDataset(Dataset):
         augment: bool = False,
         object_ids: tuple[int, ...] = OBJECT_IDS,
         filter_min_object_area_ratio: float = 0.0,
+        image_feature_mode: str = "none",
+        image_feature_cache=None,
     ) -> None:
         self.split = split
         self.root = Path(root)
@@ -51,6 +54,8 @@ class EgoHOSMaskDataset(Dataset):
         self.min_area_ratio = min_area_ratio
         self.augment = augment
         self.object_ids = tuple(int(row) for row in object_ids)
+        self.image_feature_mode = image_feature_mode
+        self.image_feature_cache = image_feature_cache
         self.sources = tuple(source.strip().lower() for source in sources if source.strip())
         self.entries = build_egohos_entries(self.root, split, self.sources)
         if filter_min_object_area_ratio > 0:
@@ -73,10 +78,13 @@ class EgoHOSMaskDataset(Dataset):
         label = read_egohos_label(entry.label_path, self.image_size)
         object_mask = np.isin(label, self.object_ids).astype(np.float32)
         mask_array = object_mask[None] if object_mask.mean() >= self.min_area_ratio else np.zeros((0, self.image_size, self.image_size), dtype=np.float32)
+        image_feature = load_image_feature(self.image_feature_cache, self.image_feature_mode, "egohos", str(entry.image_path.resolve()), self.image_size)
         if self.augment:
-            image, mask_array = augment_image_masks(image, mask_array)
+            augmented = np.concatenate([mask_array, image_feature[None]], axis=0) if image_feature is not None else mask_array
+            image, augmented = augment_image_masks(image, augmented)
+            mask_array, image_feature = (augmented[:-1], augmented[-1]) if image_feature is not None else (augmented, None)
         image_t = torch.from_numpy(image).permute(2, 0, 1).float() / 255.0
-        return {"image": (image_t - MEAN) / STD, "target_masks": torch.from_numpy(mask_array), "entry": entry, "dataset": "egohos", "source": entry.source}
+        return {"image": (image_t - MEAN) / STD, "image_feature": torch.from_numpy(image_feature[None]) if image_feature is not None else None, "target_masks": torch.from_numpy(mask_array), "entry": entry, "dataset": "egohos", "source": entry.source}
 
 
 def build_egohos_entries(root: Path, split: str, sources: tuple[str, ...]) -> list[EgoHOSFrameEntry]:

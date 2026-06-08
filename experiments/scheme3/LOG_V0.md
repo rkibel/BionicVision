@@ -350,7 +350,7 @@ baseline. It combined:
 - segmentation
 - edge/simplification fusion
 
-During cleanup, `han_baseline.py` and `combination1.py` were refactored to use
+During cleanup, `han_fusion_baseline_models.py` and `combination1.py` were refactored to use
 model adapters under `src/models/`, and shared fusion logic was consolidated in
 `src/simplification/fusion.py`.
 

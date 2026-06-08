@@ -20,6 +20,7 @@ def load_runtime(checkpoint_path: Path, hand_checkpoint: Path, device: str):
     cfg = {
         "image_size": int(train_args["image_size"]),
         "image_feature_mode": train_args.get("image_feature_mode", "none"),
+        "image_feature_cache": train_args.get("image_feature_cache"),
         "hand_input_mode": train_args.get("hand_input_mode", "raw_ring_outer_distance"),
         "hand_kernel_size": int(train_args.get("hand_kernel_size", 15)),
         "encoder": train_args.get("encoder", "efficientnet-b4"),
@@ -56,15 +57,27 @@ def extract_frames(video_path: Path, start_frame: int, duration_seconds: float) 
 
 def predict_probs(model, hand_prior: HandPrior, frames: list[np.ndarray], indices: list[int], cfg: dict, args) -> dict[int, np.ndarray]:
     output = {}
+    video_features = predict_video_image_features(frames, cfg, args)
     for start in range(0, len(frames), args.batch_size):
         batch_frames = frames[start : start + args.batch_size]
         images = preprocess(batch_frames, cfg["image_size"]).to(args.device)
         with torch.autocast(device_type="cuda", dtype=torch.float16, enabled=args.device.startswith("cuda")):
-            model_input = model_input_tensor(images, hand_prior, args.hand_prior_power, cfg["image_feature_mode"], cfg["hand_input_mode"], cfg["hand_kernel_size"])
+            provided = video_features[start : start + len(batch_frames)].to(args.device) if video_features is not None else None
+            model_input = model_input_tensor(images, hand_prior, args.hand_prior_power, cfg["image_feature_mode"], cfg["hand_input_mode"], cfg["hand_kernel_size"], provided)
             probs = torch.sigmoid(model(model_input).squeeze(1)).detach().cpu().float().numpy()
         for local, prob in enumerate(probs):
             output[indices[start + local]] = prob
     return output
+
+
+def predict_video_image_features(frames: list[np.ndarray], cfg: dict, args) -> torch.Tensor | None:
+    if cfg["image_feature_mode"] != "glc_gaze":
+        return None
+    from src.models.saliency.glc.adapter import GLCGazeEstimator
+
+    estimator = GLCGazeEstimator(device=args.device)
+    maps = estimator.predict_frames(frames, batch_size=args.batch_size)
+    return torch.from_numpy(np.stack(maps)).unsqueeze(1)
 
 
 def preprocess(frames: list[np.ndarray], image_size: int) -> torch.Tensor:

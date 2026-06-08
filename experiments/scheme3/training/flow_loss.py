@@ -104,14 +104,19 @@ def load_flow_pair_cache(path: Path, device: torch.device) -> dict[str, torch.Te
 def write_flow_pair_cache(path: Path, row: dict[str, torch.Tensor]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".tmp.npz")
-    np.savez(
-        tmp,
-        right_grid=row["right_grid"].numpy(),
-        right_valid=row["right_valid"].numpy().astype(np.uint8),
-        left_grid=row["left_grid"].numpy(),
-        left_valid=row["left_valid"].numpy().astype(np.uint8),
-    )
-    tmp.replace(path)
+    try:
+        np.savez_compressed(
+            tmp,
+            right_grid=row["right_grid"].numpy().astype(np.float16),
+            right_valid=row["right_valid"].numpy().astype(np.uint8),
+            left_grid=row["left_grid"].numpy().astype(np.float16),
+            left_valid=row["left_valid"].numpy().astype(np.uint8),
+        )
+        tmp.replace(path)
+    except OSError:
+        # Flow caching is an optimization; a full/read-only disk must not
+        # terminate an otherwise valid training run.
+        tmp.unlink(missing_ok=True)
 
 
 def flow_grid_source_to_target(source_images: torch.Tensor, target_images: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:

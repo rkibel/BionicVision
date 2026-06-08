@@ -24,6 +24,8 @@ def build_datasets(args) -> dict[str, Any]:
         target_start=args.benchmark_start_frame,
         target_end=args.benchmark_end_frame,
         preserve_order=True,
+        image_feature_mode=args.image_feature_mode,
+        image_feature_cache=args.image_feature_cache,
     )
     egohos_val_by_split = {
         split: build_egohos_dataset(split, args.image_size, args.egohos_val_samples, args.seed + 1991 + idx * 101, args, preserve_order=True, balance_sources=args.egohos_balance_val_sources)
@@ -41,6 +43,8 @@ def build_datasets(args) -> dict[str, Any]:
         target_start=args.benchmark_start_frame,
         target_end=args.benchmark_end_frame,
         shuffle=False,
+        image_feature_mode=args.image_feature_mode,
+        image_feature_cache=args.image_feature_cache,
     )
     flow_ds = build_flow_dataset(args.train_splits, args.image_size, args.flow_pair_samples, args.seed + 1707, parse_offsets(args.flow_pair_offsets), args) if args.flow_pair_weight > 0 else None
     train_eval_ds = build_supervised_dataset(args, samples_override=args.train_eval_samples, augment=False) if args.train_eval_samples > 0 else None
@@ -94,6 +98,8 @@ def build_mask_dataset(splits: list[str], image_size: int, samples: int, seed: i
             target_start=args.benchmark_start_frame,
             target_end=args.benchmark_end_frame,
             augment=augment,
+            image_feature_mode=args.image_feature_mode,
+            image_feature_cache=args.image_feature_cache,
         )
         for idx, split in enumerate(splits)
     ]
@@ -113,6 +119,8 @@ def build_egohos_dataset(split: str, image_size: int, samples: int, seed: int, a
         balance_sources=balance_sources,
         preserve_order=preserve_order,
         augment=augment and not preserve_order,
+        image_feature_mode=args.image_feature_mode,
+        image_feature_cache=args.image_feature_cache,
     )
 
 
@@ -129,6 +137,8 @@ def build_flow_dataset(splits: list[str], image_size: int, samples: int, seed: i
             target_start=args.benchmark_start_frame,
             target_end=args.benchmark_end_frame,
             frame_offsets=offsets,
+            image_feature_mode=args.image_feature_mode,
+            image_feature_cache=args.image_feature_cache,
         )
         for idx, split in enumerate(splits)
     ]

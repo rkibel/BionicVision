@@ -21,7 +21,7 @@ from evaluation.video_temporal import postprocess_probs
 ROOT = Path(__file__).resolve().parents[2]
 OUTPUT_DIR = ROOT / "outputs/experiments/scheme3"
 HAND_CHECKPOINT = OUTPUT_DIR / "hand_segmentor/best.pt"
-CURRENT_DENSE_CHECKPOINT = OUTPUT_DIR / "checkpoints/dense_union_unetpp_b4_raw_ring_outer_distance_egohos_ego4dweight_v7.pt"
+CURRENT_DENSE_CHECKPOINT = OUTPUT_DIR / "checkpoints/best.pt"
 DEFAULT_BENCHMARK_TAKE = "sfu_cooking_008_3"
 DEFAULT_BENCHMARK_CAMERA = DEFAULT_EGOEXO_CAMERA
 DEFAULT_BENCHMARK_START = 3150
@@ -30,7 +30,7 @@ DEFAULT_BENCHMARK_START = 3150
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--checkpoint", type=Path, default=CURRENT_DENSE_CHECKPOINT)
-    parser.add_argument("--output-dir", type=Path, default=OUTPUT_DIR / "qualitative_runs/dense_union_egohos_ego4dweight_v7_target")
+    parser.add_argument("--output-dir", type=Path, default=OUTPUT_DIR / "qualitative_runs/best_target")
     parser.add_argument("--input-video", type=Path, default=None, help="Any RGB video path. If omitted, --take/--camera select an Ego-Exo4D video.")
     parser.add_argument("--label", default="", help="Optional run label stored in the manifest.")
     parser.add_argument("--take", default=DEFAULT_BENCHMARK_TAKE)

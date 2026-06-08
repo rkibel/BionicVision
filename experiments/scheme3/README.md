@@ -13,13 +13,7 @@ object/interaction mask.
 Current best broad-object model:
 
 ```
-outputs/experiments/scheme3/checkpoints/dense_union_unetpp_b4_raw_ring_outer_distance_egohos_ego4dweight_v7.pt
-```
-
-Original dense baseline:
-
-```
-outputs/experiments/scheme3/checkpoints/dense_union_unetpp_b4_raw_ring_outer_distance_finetune.pt
+outputs/experiments/scheme3/checkpoints/best.pt
 ```
 
 Hand-prior checkpoint required by both:
@@ -50,12 +44,12 @@ in the files above.
 
 ## Train
 
-Default training starts from v7 and writes a new candidate checkpoint:
+Default training starts from `best.pt` and writes a candidate checkpoint:
 
 ```bash
 .venv-models/bin/python experiments/scheme3/train_dense_union.py \
-  --output outputs/experiments/scheme3/checkpoints/dense_union_unetpp_b4_raw_ring_outer_distance_egohos_next.pt \
-  --summary-output outputs/experiments/scheme3/checkpoints/dense_union_unetpp_b4_raw_ring_outer_distance_egohos_next_summary.json
+  --output outputs/experiments/scheme3/checkpoints/candidate.pt \
+  --summary-output outputs/experiments/scheme3/checkpoints/candidate_summary.json
 ```
 
 A quick smoke run uses the reduced deterministic preset:
@@ -83,12 +77,12 @@ diagnostic contact-sheet export.
 
 ## Evaluate
 
-Evaluate v7 with postprocessed supervised and temporal metrics:
+Evaluate the retained best model with postprocessed supervised and temporal metrics:
 
 ```bash
 .venv-models/bin/python experiments/scheme3/evaluate_dense_union.py \
-  --checkpoint outputs/experiments/scheme3/checkpoints/dense_union_unetpp_b4_raw_ring_outer_distance_egohos_ego4dweight_v7.pt \
-  --output outputs/experiments/scheme3/checkpoints/dense_union_motion_metric_egohos_ego4dweight_v7.json
+  --checkpoint outputs/experiments/scheme3/checkpoints/best.pt \
+  --output outputs/experiments/scheme3/checkpoints/best_eval.json
 ```
 
 The evaluator reports:
@@ -109,7 +103,7 @@ Render an Ego-Exo take:
 
 ```bash
 .venv-models/bin/python experiments/scheme3/render_dense_union.py \
-  --output-dir outputs/experiments/scheme3/qualitative_runs/v7_target
+  --output-dir outputs/experiments/scheme3/qualitative_runs/best_target
 ```
 
 Render an arbitrary video:
@@ -119,7 +113,7 @@ Render an arbitrary video:
   --input-video /path/to/video.mp4 \
   --start-frame 0 \
   --duration-seconds 30 \
-  --output-dir outputs/experiments/scheme3/qualitative_runs/v7_custom_video
+  --output-dir outputs/experiments/scheme3/qualitative_runs/best_custom_video
 ```
 
 Rendered videos and masks are treated as disposable qualitative outputs and are

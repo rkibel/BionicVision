@@ -19,6 +19,7 @@ from dataset_loaders.common import (
     augment_image_masks,
     decode_track_mask,
     is_hand_track,
+    load_image_feature,
     load_relations,
     read_video_frame,
     take_video_path,
@@ -45,6 +46,8 @@ class EgoExoMaskDataset(Dataset):
         max_objects: int = 24,
         min_area_ratio: float = 0.00035,
         augment: bool = False,
+        image_feature_mode: str = "none",
+        image_feature_cache=None,
     ) -> None:
         self.split = split
         self.camera_name = camera_name
@@ -52,6 +55,8 @@ class EgoExoMaskDataset(Dataset):
         self.max_objects = max_objects
         self.min_area_ratio = min_area_ratio
         self.augment = augment
+        self.image_feature_mode = image_feature_mode
+        self.image_feature_cache = image_feature_cache
         self.relations = load_relations(split)
         self.entries = build_frame_entries(self.relations, split, camera_name, exclude_target_window, target_only, target_take, target_start, target_end)
         if shuffle:
@@ -78,10 +83,14 @@ class EgoExoMaskDataset(Dataset):
                 masks.append(mask)
         masks = sorted(masks, key=lambda item: float(item.sum()), reverse=True)[: self.max_objects]
         mask_array = np.stack(masks).astype(np.float32) if masks else np.zeros((0, self.image_size, self.image_size), dtype=np.float32)
+        identity = f"{take_video_path(entry.take_name, entry.camera_name)}|{entry.frame_number}"
+        image_feature = load_image_feature(self.image_feature_cache, self.image_feature_mode, "egoexo", identity, self.image_size)
         if self.augment:
-            frame, mask_array = augment_image_masks(frame, mask_array)
+            augmented = np.concatenate([mask_array, image_feature[None]], axis=0) if image_feature is not None else mask_array
+            frame, augmented = augment_image_masks(frame, augmented)
+            mask_array, image_feature = (augmented[:-1], augmented[-1]) if image_feature is not None else (augmented, None)
         image = torch.from_numpy(frame).permute(2, 0, 1).float() / 255.0
-        return {"image": (image - MEAN) / STD, "target_masks": torch.from_numpy(mask_array), "entry": entry, "dataset": "egoexo", "source": "egoexo"}
+        return {"image": (image - MEAN) / STD, "image_feature": torch.from_numpy(image_feature[None]) if image_feature is not None else None, "target_masks": torch.from_numpy(mask_array), "entry": entry, "dataset": "egoexo", "source": "egoexo"}
 
     def close(self) -> None:
         for capture in self._captures.values():
@@ -104,6 +113,8 @@ class EgoExoFlowPairDataset(Dataset):
         target_start: int = -1,
         target_end: int = -1,
         frame_offsets: tuple[int, ...] = (1, -1, 2, -2),
+        image_feature_mode: str = "none",
+        image_feature_cache=None,
     ) -> None:
         self.base = EgoExoMaskDataset(
             split,
@@ -116,6 +127,8 @@ class EgoExoFlowPairDataset(Dataset):
             target_start=target_start,
             target_end=target_end,
             shuffle=False,
+            image_feature_mode=image_feature_mode,
+            image_feature_cache=image_feature_cache,
         )
         self.pairs = build_flow_pairs(self.base.entries, frame_offsets)
         random.Random(seed).shuffle(self.pairs)
@@ -130,7 +143,9 @@ class EgoExoFlowPairDataset(Dataset):
         left = self.base.sample(entry)
         frame = read_video_frame(self.base._captures, take_video_path(entry.take_name, entry.camera_name), neighbor, self.base.image_size)
         image = torch.from_numpy(frame).permute(2, 0, 1).float() / 255.0
-        return {"left": left, "right_image": (image - MEAN) / STD, "right_frame_number": int(neighbor)}
+        identity = f"{take_video_path(entry.take_name, entry.camera_name)}|{neighbor}"
+        feature = load_image_feature(self.base.image_feature_cache, self.base.image_feature_mode, "egoexo", identity, self.base.image_size)
+        return {"left": left, "right_image": (image - MEAN) / STD, "right_image_feature": torch.from_numpy(feature[None]) if feature is not None else None, "right_frame_number": int(neighbor)}
 
     def close(self) -> None:
         self.base.close()

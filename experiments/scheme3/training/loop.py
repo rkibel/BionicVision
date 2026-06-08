@@ -15,6 +15,7 @@ from utils import mean, parse_csv, parse_label_ids, parse_offsets, parse_weight_
 from training.flow_loss import cached_flow_pair_grids, unsupervised_flow_loss
 from training.data import sample_loader
 from evaluation.metrics import evaluate_union_logits_sweep
+from models.dense import input_channel_norms
 
 
 def evaluate_epoch(model, hand_prior: HandPrior, datasets: dict[str, Any], target_loader: DataLoader, args, thresholds: list[float]) -> tuple[dict, dict[str, dict], float]:
@@ -93,7 +94,7 @@ def collect_loader_predictions(model, hand_prior: HandPrior, loader: DataLoader,
     logits_rows, targets, sources = [], [], []
     for batch in loader:
         images = batch["images"].to(args.device)
-        logits_rows.append(predict_logits(model, hand_prior, images, args).squeeze(1).detach().cpu())
+        logits_rows.append(predict_logits(model, hand_prior, images, args, batch_image_features(batch, "image_features", args.device)).squeeze(1).detach().cpu())
         targets.extend([target.detach().cpu() for target in batch["target_masks"]])
         sources.extend(batch.get("sources", [""] * len(batch["target_masks"])))
     logits = torch.cat(logits_rows) if logits_rows else torch.empty((0, args.image_size, args.image_size))
@@ -102,7 +103,24 @@ def collect_loader_predictions(model, hand_prior: HandPrior, loader: DataLoader,
 
 def train_epoch(model, hand_prior: HandPrior, optimizer, scaler, train_loader: DataLoader, flow_loader: DataLoader | None, args) -> tuple[float, float]:
     model.train()
+    for module in model.modules():
+        direct_parameters = list(module.parameters(recurse=False))
+        if direct_parameters and not any(parameter.requires_grad for parameter in direct_parameters):
+            module.eval()
     losses, flow_losses = [], []
+    if args.temporal_only:
+        if flow_loader is None:
+            raise ValueError("--temporal-only requires flow-pair training data")
+        steps = args.flow_steps_per_epoch if args.flow_steps_per_epoch > 0 else len(flow_loader)
+        flow_iter = iter(flow_loader)
+        for _ in range(steps):
+            try:
+                batch = next(flow_iter)
+            except StopIteration:
+                flow_iter = iter(flow_loader)
+                batch = next(flow_iter)
+            flow_losses.append(train_flow_step(model, hand_prior, optimizer, scaler, batch, args))
+        return 0.0, mean(flow_losses)
     flow_iter = iter(flow_loader) if flow_loader is not None else None
     for batch in train_loader:
         losses.append(train_supervised_step(model, hand_prior, optimizer, scaler, batch, args))
@@ -123,7 +141,7 @@ def train_supervised_step(model, hand_prior: HandPrior, optimizer, scaler, batch
     optimizer.zero_grad(set_to_none=True)
     with torch.autocast(device_type="cuda", dtype=torch.float16, enabled=args.device.startswith("cuda")):
         raw_hand = hand_prior(images)
-        model_input = model_input_tensor_from_raw_hand(images, raw_hand, args.hand_prior_power, args.image_feature_mode, args.hand_input_mode, args.hand_kernel_size)
+        model_input = model_input_tensor_from_raw_hand(images, raw_hand, args.hand_prior_power, args.image_feature_mode, args.hand_input_mode, args.hand_kernel_size, batch_image_features(batch, "image_features", args.device))
         logits = model(model_input).squeeze(1)
         loss = dense_loss(logits, target, args, sample_weights)
     scaler.scale(loss).backward()
@@ -141,11 +159,12 @@ def train_flow_step(model, hand_prior: HandPrior, optimizer, scaler, batch: dict
     with torch.autocast(device_type="cuda", dtype=torch.float16, enabled=args.device.startswith("cuda")):
         images = torch.cat([left, right], dim=0)
         raw_hand = hand_prior(images)
-        model_input = model_input_tensor_from_raw_hand(images, raw_hand, args.hand_prior_power, args.image_feature_mode, args.hand_input_mode, args.hand_kernel_size)
+        image_features = combine_flow_image_features(batch, args.device)
+        model_input = model_input_tensor_from_raw_hand(images, raw_hand, args.hand_prior_power, args.image_feature_mode, args.hand_input_mode, args.hand_kernel_size, image_features)
         logits_left, logits_right = model(model_input).squeeze(1).chunk(2, dim=0)
         supervised = dense_loss(logits_left, target_left, args, sample_weights)
         temporal = unsupervised_flow_loss(logits_left, logits_right, left, right, args.flow_pair_bg_weight, args.flow_pair_min_prob, flow_grids)
-        loss = supervised + args.flow_pair_weight * temporal
+        loss = args.flow_supervised_weight * supervised + args.flow_pair_weight * temporal
     scaler.scale(loss).backward()
     step_optimizer(optimizer, scaler, model)
     return float(loss.detach().cpu())
@@ -232,10 +251,21 @@ def step_optimizer(optimizer, scaler, model) -> None:
     scaler.update()
 
 
-def predict_logits(model, hand_prior: HandPrior, images: torch.Tensor, args) -> torch.Tensor:
+def predict_logits(model, hand_prior: HandPrior, images: torch.Tensor, args, image_features: torch.Tensor | None = None) -> torch.Tensor:
     raw_hand = hand_prior(images)
-    model_input = model_input_tensor_from_raw_hand(images, raw_hand, args.hand_prior_power, args.image_feature_mode, args.hand_input_mode, args.hand_kernel_size)
+    model_input = model_input_tensor_from_raw_hand(images, raw_hand, args.hand_prior_power, args.image_feature_mode, args.hand_input_mode, args.hand_kernel_size, image_features)
     return model(model_input)
+
+
+def batch_image_features(batch: dict, key: str, device: str) -> torch.Tensor | None:
+    features = batch.get(key)
+    return features.to(device) if features is not None else None
+
+
+def combine_flow_image_features(batch: dict, device: str) -> torch.Tensor | None:
+    left = batch_image_features(batch, "image_features_left", device)
+    right = batch_image_features(batch, "image_features_right", device)
+    return torch.cat([left, right], dim=0) if left is not None and right is not None else None
 
 
 def evaluate_prediction_bundle(prediction: dict[str, Any], thresholds: list[float]) -> dict:
@@ -329,15 +359,26 @@ def selection_iou(row: dict, statistic: str, min_source_frames: int = 16) -> flo
     raise ValueError(f"Unsupported EgoHOS selection statistic: {statistic}")
 
 
-def build_summary(args, init_metadata: dict | None, datasets: dict[str, Any], best_val: dict, final_named: dict[str, dict], history: list[dict], best_score: float) -> dict:
+def build_summary(model, args, init_metadata: dict | None, datasets: dict[str, Any], best_val: dict, final_named: dict[str, dict], history: list[dict], best_score: float) -> dict:
     return {
-        "model_kind": "scheme3_dense_union_unetpp",
+        "model_kind": {"tc_monodepth": "scheme4_depth_prior_dense_union_unetpp", "glc_gaze": "scheme5_glc_gaze_prior_dense_union_unetpp"}.get(args.image_feature_mode, "scheme3_dense_union_unetpp"),
         "checkpoint": str(args.output),
         "dev_run": args.dev_run,
         "encoder": args.encoder,
         "encoder_weights": args.encoder_weights,
         "image_size": args.image_size,
         "image_feature_mode": args.image_feature_mode,
+        "image_feature_cache": str(args.image_feature_cache) if args.image_feature_cache is not None else None,
+        "new_input_init": args.new_input_init,
+        "new_input_init_scale": args.new_input_init_scale,
+        "image_feature_gradient_scale": args.image_feature_gradient_scale,
+        "image_feature_stage_epochs": args.image_feature_stage_epochs,
+        "image_feature_stage_learning_rate": args.image_feature_stage_learning_rate,
+        "joint_image_feature_learning_rate": args.joint_image_feature_learning_rate,
+        "track_image_feature_ablation": args.track_image_feature_ablation,
+        "stage_trainable_parameters": args.stage_trainable_parameters,
+        "gradient_scaled_parameter": args.gradient_scaled_parameter,
+        "input_channel_norms": input_channel_norms(model),
         "hand_input_mode": args.hand_input_mode,
         "hand_kernel_size": args.hand_kernel_size,
         "init_checkpoint": init_metadata,
@@ -366,6 +407,8 @@ def build_summary(args, init_metadata: dict | None, datasets: dict[str, Any], be
         "flow_pair_samples": len(datasets["flow"]) if datasets["flow"] is not None else 0,
         "flow_steps_per_epoch": args.flow_steps_per_epoch,
         "flow_pair_weight": args.flow_pair_weight,
+        "flow_supervised_weight": args.flow_supervised_weight,
+        "temporal_only": args.temporal_only,
         "flow_pair_offsets": parse_offsets(args.flow_pair_offsets),
         "flow_pair_bg_weight": args.flow_pair_bg_weight,
         "flow_pair_min_prob": args.flow_pair_min_prob,

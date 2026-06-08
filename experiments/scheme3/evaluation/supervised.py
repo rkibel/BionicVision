@@ -24,7 +24,8 @@ def evaluate_supervised_dataset(model, hand_prior: HandPrior, dataset, cfg: dict
         images = batch["images"].to(args.device)
         targets = target_union(batch["target_masks"], args.device).bool()
         raw_hand = transform_hand_prior(hand_prior(images), args.hand_prior_power)
-        probs = predict_image_tensor_probs(model, images, raw_hand, cfg, args)
+        features = batch.get("image_features")
+        probs = predict_image_tensor_probs(model, images, raw_hand, cfg, args, features.to(args.device) if features is not None else None)
         probs_rows.append(probs.detach().cpu())
         target_rows.append(targets.detach().cpu())
         sources.extend(batch.get("sources", [""] * int(targets.shape[0])))
@@ -44,7 +45,7 @@ def evaluate_supervised_dataset(model, hand_prior: HandPrior, dataset, cfg: dict
     }
 
 
-def predict_image_tensor_probs(model, images: torch.Tensor, raw_hand: torch.Tensor, cfg: dict, args) -> torch.Tensor:
+def predict_image_tensor_probs(model, images: torch.Tensor, raw_hand: torch.Tensor, cfg: dict, args, image_features: torch.Tensor | None = None) -> torch.Tensor:
     with torch.autocast(device_type="cuda", dtype=torch.float16, enabled=args.device.startswith("cuda")):
         model_input = model_input_tensor_from_raw_hand(
             images,
@@ -53,6 +54,7 @@ def predict_image_tensor_probs(model, images: torch.Tensor, raw_hand: torch.Tens
             cfg["image_feature_mode"],
             cfg["hand_input_mode"],
             cfg["hand_kernel_size"],
+            image_features,
         )
         return torch.sigmoid(model(model_input).squeeze(1)).detach().float()
 

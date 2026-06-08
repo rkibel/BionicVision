@@ -49,6 +49,8 @@ def main() -> None:
             target_start=args.start_frame,
             target_end=args.benchmark_end_frame,
             preserve_order=True,
+            image_feature_mode=cfg["image_feature_mode"],
+            image_feature_cache=cfg["image_feature_cache"],
         ),
         cfg,
         args,
@@ -63,7 +65,7 @@ def main() -> None:
 def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--checkpoint", type=Path, default=CURRENT_DENSE_CHECKPOINT)
-    parser.add_argument("--output", type=Path, default=OUTPUT_DIR / "checkpoints/dense_union_temporal_eval.json")
+    parser.add_argument("--output", type=Path, default=OUTPUT_DIR / "checkpoints/best_eval.json")
     parser.add_argument("--hand-checkpoint", type=Path, default=HAND_CHECKPOINT)
     parser.add_argument("--take", default=DEFAULT_BENCHMARK_TAKE)
     parser.add_argument("--camera", default=DEFAULT_BENCHMARK_CAMERA)
@@ -144,6 +146,8 @@ def evaluate_egohos_splits(model, hand_prior, cfg: dict, args, threshold: float)
                 sources=tuple(parse_csv(args.egohos_sources)),
                 object_ids=parse_label_ids(args.egohos_object_ids),
                 preserve_order=True,
+                image_feature_mode=cfg["image_feature_mode"],
+                image_feature_cache=cfg["image_feature_cache"],
             ),
             cfg,
             args,

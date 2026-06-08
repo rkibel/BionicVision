@@ -1,57 +1,33 @@
 # Scheme 3 Outputs
 
-This output tree is intentionally small. It keeps only the original dense
-baseline, the current best v7 dense checkpoint, and the hand-prior checkpoint
-needed to run either dense model.
+This output tree keeps only the current best dense checkpoint, its statistics,
+and the hand-prior checkpoint required to run it.
 
 ## Retained Files
 
 ```
 outputs/experiments/scheme3/
   checkpoints/
-    dense_union_unetpp_b4_raw_ring_outer_distance_finetune.pt
-    dense_union_unetpp_b4_raw_ring_outer_distance_finetune_summary.json
-    dense_union_unetpp_b4_raw_ring_outer_distance_egohos_ego4dweight_v7.pt
-    dense_union_unetpp_b4_raw_ring_outer_distance_egohos_ego4dweight_v7_summary.json
-    dense_union_motion_metric_egohos_ego4dweight_v7.json
+    best.pt
+    best_summary.json
+    best_eval.json
   hand_segmentor/
     best.pt
 ```
 
-Current size after cleanup:
-
-```
-outputs/experiments/scheme3: 241M
-```
-
 ## Why These Stay
 
-`dense_union_unetpp_b4_raw_ring_outer_distance_finetune.pt` is the original
-Ego-Exo dense baseline. Its summary records the pre-EgoHOS training behavior.
-
-`dense_union_unetpp_b4_raw_ring_outer_distance_egohos_ego4dweight_v7.pt` is the
-retained best broad-object checkpoint. It is the default checkpoint in the
-training, evaluation, and rendering scripts.
-
-`dense_union_motion_metric_egohos_ego4dweight_v7.json` is the retained
-postprocessed evaluation report for v7, including supervised IoU and
-flow-aligned temporal IoU.
+`best.pt` is the retained broad-object reference checkpoint and the default in
+the training, evaluation, and rendering scripts. `best_summary.json` records
+its training metrics, and `best_eval.json` records postprocessed supervised and
+flow-aligned temporal metrics.
 
 `hand_segmentor/best.pt` is the dense-model hand prior. It is required for
 training, evaluation, and rendering.
 
 ## Reference Metrics
 
-Original baseline summary:
-
-```
-Ego-Exo val IoU: 0.9500
-held-out target IoU: 0.8688
-held-out target temporal IoU: 0.4731
-threshold: 0.54
-```
-
-v7 training summary:
+Best training summary:
 
 ```
 Ego-Exo val IoU: 0.9369
@@ -61,7 +37,7 @@ held-out target IoU: 0.8663
 threshold: 0.18
 ```
 
-v7 retained postprocessed metric report:
+Retained postprocessed metric report:
 
 ```
 Ego-Exo supervised IoU: 0.9395

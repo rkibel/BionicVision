@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -61,6 +62,28 @@ def augment_image_masks(image: np.ndarray, masks: np.ndarray) -> tuple[np.ndarra
     if random.random() < 0.2:
         image += np.random.normal(0.0, 4.0, image.shape).astype(np.float32)
     return np.clip(image, 0, 255).astype(np.uint8), masks.astype(np.float32, copy=False)
+
+
+def image_feature_cache_path(cache_dir: Path, source: str, identity: str) -> Path:
+    digest = hashlib.sha1(f"{source}|{identity}".encode("utf-8")).hexdigest()
+    return Path(cache_dir) / digest[:2] / f"{digest}.npy"
+
+
+def load_image_feature(cache_dir: Path | None, mode: str, source: str, identity: str, image_size: int) -> np.ndarray | None:
+    if mode == "none" or mode == "tc_monodepth":
+        return None
+    if mode != "glc_gaze":
+        raise ValueError(f"Unsupported image feature mode: {mode}")
+    if cache_dir is None:
+        raise ValueError("GLC gaze mode requires --image-feature-cache")
+    path = image_feature_cache_path(cache_dir, source, identity)
+    if not path.exists():
+        raise FileNotFoundError(f"Missing GLC gaze cache entry: {path}")
+    feature = np.load(path)
+    feature = feature.astype(np.float32) / 255.0 if feature.dtype == np.uint8 else feature.astype(np.float32)
+    if feature.shape != (image_size, image_size):
+        feature = cv2.resize(feature, (image_size, image_size), interpolation=cv2.INTER_LINEAR)
+    return feature
 
 
 def relation_path(split: str) -> Path:
@@ -141,18 +164,21 @@ def egohos_source(stem: str) -> str:
 
 
 def collate_samples(samples: list[dict[str, Any]]) -> dict[str, Any]:
-    return {
+    batch = {
         "images": torch.stack([sample["image"] for sample in samples]),
         "target_masks": [sample["target_masks"] for sample in samples],
         "entries": [sample["entry"] for sample in samples],
         "datasets": [sample.get("dataset", "") for sample in samples],
         "sources": [sample.get("source", "") for sample in samples],
     }
+    if all(sample.get("image_feature") is not None for sample in samples):
+        batch["image_features"] = torch.stack([sample["image_feature"] for sample in samples])
+    return batch
 
 
 def collate_flow_pairs(samples: list[dict[str, Any]]) -> dict[str, Any]:
     left = [sample["left"] for sample in samples]
-    return {
+    batch = {
         "images_left": torch.stack([sample["image"] for sample in left]),
         "images_right": torch.stack([sample["right_image"] for sample in samples]),
         "target_masks_left": [sample["target_masks"] for sample in left],
@@ -161,6 +187,10 @@ def collate_flow_pairs(samples: list[dict[str, Any]]) -> dict[str, Any]:
         "sources_left": [sample.get("source", "") for sample in left],
         "right_frame_numbers": [sample["right_frame_number"] for sample in samples],
     }
+    if all(sample["left"].get("image_feature") is not None and sample.get("right_image_feature") is not None for sample in samples):
+        batch["image_features_left"] = torch.stack([sample["left"]["image_feature"] for sample in samples])
+        batch["image_features_right"] = torch.stack([sample["right_image_feature"] for sample in samples])
+    return batch
 
 
 def target_union(targets: list[torch.Tensor], device: str | torch.device) -> torch.Tensor:
