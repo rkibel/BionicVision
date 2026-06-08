@@ -17,14 +17,13 @@ import shutil
 import cv2
 import numpy as np
 
-from datasets.frames import save_gray
 from models.depth.tc_monodepth.adapter import TCMonoDepthEstimator
 from models.saliency.deepgaze3.adapter import DeepGaze3SaliencyEstimator
 from models.segmentation.deva.run_manual import run_deva_manual
-from simplification.fusion import baseline_fusion
 
-from .han_baseline import (
-    HanBaselineConfig,
+from .han_fusion_baseline_models import (
+    HanFusionBaselineModelsConfig,
+    baseline_fusion,
     ensure_cuda_if_requested,
     extract_video_frames,
     gen_image_brightness,
@@ -41,7 +40,7 @@ DEFAULT_OUTPUT_ROOT = ROOT / "outputs" / "han_fusion_temporal_models_test_set"
 class HanFusionTemporalModelsConfig:
     """Configuration for Han fusion with temporal model inputs."""
 
-    baseline: HanBaselineConfig = HanBaselineConfig()
+    baseline: HanFusionBaselineModelsConfig = HanFusionBaselineModelsConfig()
     deva_size: int = 360
     deva_detection_every: int = 1
     deva_memory_reset_interval: int = 4
@@ -121,7 +120,9 @@ def build_deepgaze3_saliency_frames(
         image = cv2.imread(str(frame_path))
         if image is None:
             raise FileNotFoundError(frame_path)
-        output_paths.append(save_gray(output_dir / f"{frame_path.stem}.png", estimator.predict(image)))
+        output_path = output_dir / f"{frame_path.stem}.png"
+        cv2.imwrite(str(output_path), estimator.predict(image))
+        output_paths.append(output_path)
     return output_paths
 
 
@@ -191,7 +192,9 @@ def build_han_fusion_segmentation_frames(
         if annotation is None:
             raise FileNotFoundError(annotation_path)
         segmentation = np.where(np.any(annotation > 0, axis=2), 255, 0).astype(np.uint8)
-        output_paths.append(save_gray(output_dir / f"frame{index:05d}.png", segmentation))
+        output_path = output_dir / f"frame{index:05d}.png"
+        cv2.imwrite(str(output_path), segmentation)
+        output_paths.append(output_path)
     return output_paths
 
 
@@ -220,7 +223,9 @@ def combine_han_fusion_frames(
             depth=depth,
             saliency_threshold_fraction=config.baseline.saliency_threshold_fraction,
         )
-        output_paths.append(save_gray(output_dir / f"frame{index:05d}.png", fused))
+        output_path = output_dir / f"frame{index:05d}.png"
+        cv2.imwrite(str(output_path), fused)
+        output_paths.append(output_path)
     return output_paths
 
 
@@ -245,7 +250,7 @@ def main() -> None:
     parser.add_argument("--deva-memory-reset-interval", type=int, default=4)
     parser.add_argument("--deva-size", type=int, default=360)
     args = parser.parse_args()
-    baseline = HanBaselineConfig(target_fps=args.target_fps, max_frames=args.max_frames, device=args.device)
+    baseline = HanFusionBaselineModelsConfig(target_fps=args.target_fps, max_frames=args.max_frames, device=args.device)
     config = HanFusionTemporalModelsConfig(
         baseline=baseline,
         deva_detection_every=args.deva_detection_every,

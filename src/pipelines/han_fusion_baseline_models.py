@@ -1,7 +1,7 @@
-"""Han et al. 2021 baseline pipeline on EPIC-KITCHENS clips.
+"""Han-style fusion pipeline with the baseline models.
 
 This module ports the operations in bionicvisionlab/2021-han-scene-simplification
-for local EPIC-KITCHENS 10-second clips. The implementation keeps Han's depth,
+for local EPIC-KITCHENS clips. The implementation keeps Han's depth,
 saliency, segmentation, and combination mechanics intact. The only dataset
 adaptation is the class lists used to filter ADE20K scene parsing and COCO
 Detectron2 detections for indoor EPIC-KITCHENS scenes.
@@ -26,11 +26,10 @@ from models.depth.monodepth2.adapter import predict_depth_folder
 from models.saliency.deepgaze2.adapter import compute_saliency
 from models.segmentation.detectron2.adapter import build_predictor, predict_important_mask_from_image
 from models.segmentation.mit_scene_parsing.adapter import build_scene_module, predict_labels
-from simplification.fusion import baseline_fusion
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CLIP_DIR = ROOT / "data" / "epic_kitchens" / "video_snippets" / "test_set" / "inputs"
-DEFAULT_OUTPUT_ROOT = ROOT / "outputs" / "han_baseline_test_set"
+DEFAULT_OUTPUT_ROOT = ROOT / "outputs" / "han_fusion_baseline_models_test_set"
 
 ADE20K_STRUCTURE_CLASSES = (
     0,  # wall
@@ -100,7 +99,7 @@ def load_depth(path: str | Path, *, mmap: bool = False) -> np.ndarray:
 
 
 @dataclass(frozen=True)
-class HanBaselineConfig:
+class HanFusionBaselineModelsConfig:
     target_fps: float = 20.0
     max_frames: int | None = None
     device: str = "cuda"
@@ -201,7 +200,45 @@ def gen_image_brightness(
     return np.dstack([one_channel] * 3).astype(np.uint8)
 
 
-def build_depth_frames(frame_dir: Path, output_dir: Path, config: HanBaselineConfig) -> list[Path]:
+def depth_weighted_mask(mask: np.ndarray, depth: np.ndarray) -> np.ndarray:
+    """Use normalized depth as brightness within an active mask."""
+
+    depth_float = np.asarray(depth, dtype=np.float32)
+    if depth_float.shape[:2] != mask.shape[:2]:
+        height, width = mask.shape[:2]
+        depth_float = cv2.resize(depth_float, (width, height), interpolation=cv2.INTER_LINEAR)
+    active = np.asarray(mask) > 0
+    if depth_float.max() > depth_float.min():
+        depth_norm = (depth_float - depth_float.min()) / (depth_float.max() - depth_float.min())
+    else:
+        depth_norm = np.zeros_like(depth_float)
+    output = np.zeros(mask.shape[:2], dtype=np.uint8)
+    output[active] = np.clip(depth_norm[active] * 255.0, 0, 255).astype(np.uint8)
+    return output
+
+
+def baseline_fusion(
+    segmentation: np.ndarray,
+    saliency: np.ndarray,
+    depth: np.ndarray,
+    *,
+    saliency_threshold_fraction: float = 0.90,
+) -> np.ndarray:
+    """OR segmentation with thresholded saliency, then depth-weight."""
+
+    threshold = float(np.max(saliency)) * saliency_threshold_fraction
+    saliency_mask = np.asarray(saliency).copy()
+    saliency_mask[saliency_mask <= threshold] = 0
+    saliency_mask[saliency_mask > 0] = 255
+    saliency_mask = saliency_mask.astype(np.uint8)
+    if saliency_mask.shape[:2] != segmentation.shape[:2]:
+        height, width = segmentation.shape[:2]
+        saliency_mask = cv2.resize(saliency_mask, (width, height), interpolation=cv2.INTER_NEAREST)
+    combined = np.maximum(segmentation.astype(np.uint8), saliency_mask)
+    return depth_weighted_mask(combined, depth)
+
+
+def build_depth_frames(frame_dir: Path, output_dir: Path, config: HanFusionBaselineModelsConfig) -> list[Path]:
     depth_frame_dir = output_dir / "frames"
     if depth_frame_dir.exists():
         shutil.rmtree(depth_frame_dir)
@@ -243,7 +280,7 @@ def build_depth_frames(frame_dir: Path, output_dir: Path, config: HanBaselineCon
     return output_paths
 
 
-def build_saliency_frames(frame_paths: list[Path], output_dir: Path, config: HanBaselineConfig) -> list[Path]:
+def build_saliency_frames(frame_paths: list[Path], output_dir: Path, config: HanFusionBaselineModelsConfig) -> list[Path]:
     if output_dir.exists():
         shutil.rmtree(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -260,7 +297,7 @@ def build_saliency_frames(frame_paths: list[Path], output_dir: Path, config: Han
     return output_paths
 
 
-def get_houghlines(edges: np.ndarray, config: HanBaselineConfig) -> np.ndarray:
+def get_houghlines(edges: np.ndarray, config: HanFusionBaselineModelsConfig) -> np.ndarray:
     kernel = np.ones((10, 10), np.uint8)
     lines = cv2.HoughLinesP(edges.astype("uint8"), 1, np.pi / 180, 15, minLineLength=config.hough_min_line_length, maxLineGap=config.hough_max_line_gap)
     edge_combined = np.zeros(edges.shape, dtype=np.uint8)
@@ -273,7 +310,7 @@ def get_houghlines(edges: np.ndarray, config: HanBaselineConfig) -> np.ndarray:
     return edge_combined
 
 
-def build_segmentation_frames(frame_paths: list[Path], output_dir: Path, config: HanBaselineConfig) -> list[Path]:
+def build_segmentation_frames(frame_paths: list[Path], output_dir: Path, config: HanFusionBaselineModelsConfig) -> list[Path]:
     device = ensure_cuda_if_requested(config.device)
     segmentation_module = build_scene_module(device=device.type)
     predictor = build_predictor(device=device.type, score_threshold=config.detectron_score_threshold)
@@ -339,7 +376,7 @@ def read_gray_frame(path: Path) -> np.ndarray:
     return image
 
 
-def combine_frames(saliency_paths: list[Path], segmentation_paths: list[Path], depth_paths: list[Path], output_dir: Path, config: HanBaselineConfig) -> list[Path]:
+def combine_frames(saliency_paths: list[Path], segmentation_paths: list[Path], depth_paths: list[Path], output_dir: Path, config: HanFusionBaselineModelsConfig) -> list[Path]:
     if output_dir.exists():
         shutil.rmtree(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -413,7 +450,11 @@ def _load_video_frame(path: Path, *, is_color: bool) -> np.ndarray:
     return cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
 
-def run_han_baseline_on_clip(clip_path: Path, output_root: Path, config: HanBaselineConfig) -> dict[str, str | int]:
+def run_han_fusion_baseline_models_on_clip(
+    clip_path: Path,
+    output_root: Path,
+    config: HanFusionBaselineModelsConfig,
+) -> dict[str, str | int]:
     clip_root = output_root / clip_path.stem
     frames = extract_video_frames(clip_path, clip_root / "frames", config.target_fps, config.max_frames)
     saliency = build_saliency_frames(frames, clip_root / "saliency_frames", config)
@@ -426,7 +467,7 @@ def run_han_baseline_on_clip(clip_path: Path, output_root: Path, config: HanBase
     write_video(depth, videos_dir / "depth.mp4", config.target_fps, is_color=True)
     write_video(saliency, videos_dir / "saliency.mp4", config.target_fps, is_color=False)
     write_video(segmentation, videos_dir / "segmentation.mp4", config.target_fps, is_color=False)
-    write_video(combination, videos_dir / "combination.mp4", config.target_fps, is_color=False)
+    write_video(combination, videos_dir / "han_fusion_baseline_models.mp4", config.target_fps, is_color=False)
     return {
         "clip": str(clip_path),
         "frames": len(frames),
@@ -438,7 +479,11 @@ def run_han_baseline_on_clip(clip_path: Path, output_root: Path, config: HanBase
     }
 
 
-def run_han_baseline(clip_dir: Path = DEFAULT_CLIP_DIR, output_root: Path = DEFAULT_OUTPUT_ROOT, config: HanBaselineConfig = HanBaselineConfig()) -> list[dict[str, str | int]]:
+def run_han_fusion_baseline_models(
+    clip_dir: Path = DEFAULT_CLIP_DIR,
+    output_root: Path = DEFAULT_OUTPUT_ROOT,
+    config: HanFusionBaselineModelsConfig = HanFusionBaselineModelsConfig(),
+) -> list[dict[str, str | int]]:
     ensure_cuda_if_requested(config.device)
     clips = sorted(clip_dir.glob("*.mp4"))
     if not clips:
@@ -447,20 +492,20 @@ def run_han_baseline(clip_dir: Path = DEFAULT_CLIP_DIR, output_root: Path = DEFA
     summaries = []
     for clip in clips:
         print(f"processing {clip.name}", flush=True)
-        summaries.append(run_han_baseline_on_clip(clip, output_root, config))
+        summaries.append(run_han_fusion_baseline_models_on_clip(clip, output_root, config))
     return summaries
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run Han et al. 2021 baseline on EPIC-KITCHENS clips.")
+    parser = argparse.ArgumentParser(description="Run Han fusion with baseline models on EPIC-KITCHENS clips.")
     parser.add_argument("--clip-dir", type=Path, default=DEFAULT_CLIP_DIR)
     parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT)
     parser.add_argument("--target-fps", type=float, default=20.0)
     parser.add_argument("--max-frames", type=int, default=None)
     parser.add_argument("--device", choices=["cuda", "cpu"], default="cuda")
     args = parser.parse_args()
-    config = HanBaselineConfig(target_fps=args.target_fps, max_frames=args.max_frames, device=args.device)
-    summaries = run_han_baseline(args.clip_dir.resolve(), args.output_root.resolve(), config)
+    config = HanFusionBaselineModelsConfig(target_fps=args.target_fps, max_frames=args.max_frames, device=args.device)
+    summaries = run_han_fusion_baseline_models(args.clip_dir.resolve(), args.output_root.resolve(), config)
     for summary in summaries:
         print(summary)
 

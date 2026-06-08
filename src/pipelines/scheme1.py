@@ -11,10 +11,9 @@ import shutil
 import cv2
 import numpy as np
 
-from datasets.frames import save_gray
 from models.segmentation.deva.run_manual import PromptGroup, run_deva_manual
 
-from .han_baseline import (
+from .han_fusion_baseline_models import (
     ensure_cuda_if_requested,
     extract_video_frames,
     write_video,
@@ -96,8 +95,8 @@ class Scheme1Config:
     max_frames: int | None = None
     device: str = "cuda"
     deva_size: int = 360
-    deva_detection_every: int = 1
-    deva_memory_reset_interval: int = 4
+    deva_detection_every: int = 5
+    deva_memory_reset_interval: int = 0
     dino_threshold: float = 0.35
     dino_nms_threshold: float = 0.8
     sam_variant: str = "sam_hq_light"
@@ -179,7 +178,9 @@ def build_scheme1_segmentation_frames(
         if annotation is None:
             raise FileNotFoundError(annotation_path)
         mask = np.where(np.any(annotation > 0, axis=2), 255, 0).astype(np.uint8)
-        output_paths.append(save_gray(output_dir / f"frame{index:05d}.png", mask))
+        output_path = output_dir / f"frame{index:05d}.png"
+        cv2.imwrite(str(output_path), mask)
+        output_paths.append(output_path)
     return output_paths
 
 
@@ -203,8 +204,8 @@ def main() -> None:
     parser.add_argument("--target-fps", type=float, default=10.0)
     parser.add_argument("--max-frames", type=int, default=None)
     parser.add_argument("--device", choices=["cuda", "cpu"], default="cuda")
-    parser.add_argument("--deva-detection-every", type=int, default=1)
-    parser.add_argument("--deva-memory-reset-interval", type=int, default=4)
+    parser.add_argument("--deva-detection-every", type=int, default=5)
+    parser.add_argument("--deva-memory-reset-interval", type=int, default=0)
     parser.add_argument("--deva-size", type=int, default=360)
     parser.add_argument("--dino-threshold", type=float, default=0.35)
     parser.add_argument("--dino-nms-threshold", type=float, default=0.8)
