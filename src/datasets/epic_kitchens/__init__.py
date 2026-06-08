@@ -1,23 +1,5 @@
-"""Public EPIC-KITCHENS dataset helpers."""
+"""EPIC-KITCHENS VISOR hand-evaluation data access."""
 
-from .annotations import (
-    EpicFrame,
-    ObjectTierFrame,
-    VisorObject,
-    build_clip_tiers,
-    contact_object_ids,
-    load_visor_annotations,
-    rasterize_object,
-    rasterize_objects,
-)
+from .visor import VisorEvaluationItem, list_visor_items, load_visor_sample
 
-__all__ = [
-    "EpicFrame",
-    "ObjectTierFrame",
-    "VisorObject",
-    "build_clip_tiers",
-    "contact_object_ids",
-    "load_visor_annotations",
-    "rasterize_object",
-    "rasterize_objects",
-]
+__all__ = ["VisorEvaluationItem", "list_visor_items", "load_visor_sample"]
