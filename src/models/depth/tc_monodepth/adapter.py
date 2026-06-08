@@ -10,7 +10,10 @@ from types import SimpleNamespace
 import cv2
 import numpy as np
 
-from models.base import ModelSpec
+try:
+    from src.models.base import ModelSpec
+except ImportError:
+    from models.base import ModelSpec
 
 
 ROOT = Path(__file__).resolve().parents[4]
@@ -73,7 +76,7 @@ class TCMonoDepthEstimator:
         self.model = TCSmallNet(SimpleNamespace())
         checkpoint = torch.load(self.checkpoint, map_location="cpu")
         self.model.load_state_dict(checkpoint)
-        self.model.to(self.device_obj).eval()
+        self.model.to(self.device_obj).eval().requires_grad_(False)
         self.transform = Compose(
             [
                 Resize(
@@ -94,16 +97,26 @@ class TCMonoDepthEstimator:
         image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
         model_input = self.transform({"image": image_rgb})["image"]
         tensor = self._torch.from_numpy(model_input).to(self.device_obj).unsqueeze(0)
-        with self._torch.no_grad():
-            prediction = self.model(tensor)
-            prediction = self._torch.nn.functional.interpolate(
+        prediction = self.predict_tensor(tensor, output_size=image_rgb.shape[:2])
+        return prediction[0, 0].cpu().numpy().astype(np.float32)
+
+    def predict_tensor(self, images_rgb_255, *, output_size: tuple[int, int] | None = None):
+        """Predict normalized depth for a batched RGB tensor in `[0, 255]`."""
+
+        torch = self._torch
+        target_size = output_size or tuple(images_rgb_255.shape[-2:])
+        with torch.inference_mode(), torch.autocast(device_type=self.device_obj.type, enabled=False):
+            prediction = self.model(images_rgb_255.to(self.device_obj, dtype=torch.float32))
+            prediction = torch.nn.functional.interpolate(
                 prediction,
-                size=image_rgb.shape[:2],
+                size=target_size,
                 mode="bicubic",
                 align_corners=False,
             )
-        depth = prediction.squeeze().detach().cpu().numpy().astype(np.float32)
-        return normalize_depth(depth)
+            flat = prediction.flatten(1)
+            minimum = flat.amin(dim=1).view(-1, 1, 1, 1)
+            span = (flat.amax(dim=1).view(-1, 1, 1, 1) - minimum).clamp_min(1e-6)
+            return ((prediction - minimum) / span).clamp(0.0, 1.0)
 
 
 def predict_image(image_path: str | Path, *, device: str = "cuda") -> np.ndarray:
