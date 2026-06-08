@@ -1,26 +1,41 @@
-boltons==25.0.0
-einops==0.8.2
-gdown==6.0.0
-hickle==5.0.3
-imageio==2.37.3
-matplotlib==3.10.9
+# Core numeric/video stack.
 numpy==2.2.6
 opencv-python==4.13.0.92
-pandas==2.3.3
 pillow==12.2.0
-pytest==8.4.2
-PyYAML==6.0.3
-safetensors==0.7.0
-scikit-image==0.25.2
 scipy==1.15.3
-supervision==0.28.0
-timm==1.0.27
-transformers==4.30.2
+scikit-image==0.25.2
 tqdm==4.67.3
-yacs==0.1.8
+PyYAML==6.0.3
 
+# PyTorch CUDA 12.4 build used by the current model environment.
+--extra-index-url https://download.pytorch.org/whl/cu124
+torch==2.6.0+cu124
+torchvision==0.21.0+cu124
+
+# Current src datasets and evaluation.
+ego4d==1.7.3
+pytest==8.4.2
+
+# Baseline and reusable model adapters.
 deepgaze @ git+https://github.com/mpatacchiola/deepgaze.git@fddc129da9692d7a2002d0df5baf142eae3b722b
 deepgaze_pytorch @ git+https://github.com/matthias-k/DeepGaze.git@c87b106e8698497c59998b469c45770e993baca3
-detectron2 @ git+https://github.com/facebookresearch/detectron2.git@e0ec4e189d438848521aee7926f9900e114229f5
+clip @ git+https://github.com/openai/CLIP.git@d05afc436d78f1c48dc0dbf8e5980a9d471f35f6
+# Detectron2 is required by the Han baseline and is installed separately in the
+# README setup because its build metadata imports torch.
 mit_semseg @ git+https://github.com/CSAILVision/semantic-segmentation-pytorch.git@8f27c9b97d2ca7c6e05333d5766d144bf7d8c31b
 segment_anything @ git+https://github.com/SysCV/sam-hq.git@e696978d60352dc9a26b12631cd91781502c6546
+deva @ git+https://github.com/hkchengrex/Tracking-Anything-with-DEVA.git@404a112df77f9644d5c7211811329ccd8174b8c3
+# GroundingDINO is required by DEVA prompting and is installed separately in the
+# README setup because its build metadata imports torch.
+segmentation-models-pytorch==0.5.0
+
+# External adapter support not fully declared by upstream packages.
+einops==0.8.2
+fairscale==0.4.13
+fvcore==0.1.5.post20221221
+iopath==0.1.9
+ipdb==0.13.13
+scikit-learn==1.7.2
+simplejson==4.1.1
+transformers==4.30.2
+yacs==0.1.8

@@ -4,6 +4,7 @@ data_unused*/
 data_unused_latest
 external/
 outputs/
+experiments/
 *.mp4
 __pycache__/
 *.pyc
